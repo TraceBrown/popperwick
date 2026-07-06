@@ -38,7 +38,7 @@ python3 -m json.tool <edited .json>     # config edits parse
 ```
 Track record: a subagent-installed skill turned out to be a stub pointing at an uninstalled companion — caught only because its report was checked. Also run any script a subagent wrote through its own test cases once yourself.
 
-For code changes, apply the **fail-under-broken test** (community pattern, r/claudeskills "Fable as a skill" thread, 2026-07-06 — the falsifiability check in code form): a test only proves the task if it FAILS when the fix is reverted/broken. A green test that also passes on broken code is fake-green. Two separate questions, asked separately: (1) does the gate actually prove the task? (2) does an adversarial read of the *diff itself* (not the agent's summary) hold up? This targets the vault's #1 recurring failure — subagents reporting "done" mid-verification.
+For code changes, apply the **fail-under-broken test** (community pattern, r/claudeskills "Fable as a skill" thread, 2026-07-06 — the falsifiability check in code form): a test only proves the task if it FAILS when the fix is reverted/broken. A green test that also passes on broken code is fake-green. Two separate questions, asked separately: (1) does the gate actually prove the task? (2) does an adversarial read of the *diff itself* (not the agent's summary) hold up? This targets the vault's #1 recurring failure — subagents reporting "done" mid-verification. The critic-#2 seat in this gate is reserved for a cross-family GPT model (`gpt-do`, pre-built skeleton in `.claude/scripts/`) — see `HANDOFF - GPT Second Critic.md` (vault root) for activation; until then a fresh Claude subagent with no context of the build is the stand-in second critic.
 
 ## Recipe 4 — Book-pipeline output QA
 
