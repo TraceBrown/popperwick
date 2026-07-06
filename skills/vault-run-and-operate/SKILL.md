@@ -63,6 +63,19 @@ pdftotext paper.pdf paper.txt && cat paper.txt | glm-do "$EXTRACT_PROMPT"
 - `grilling` — pre-work interview for large ambiguous tasks.
 - Fable audits — user-triggered via `/model claude-fable-5`; prompt pattern that worked: context/why → negative constraints → prioritized tasks → delegation instructions → "verdict + one-line why + citation" output shape. Never ask Fable to explain its reasoning (triggers refusal/rerouting).
 
+## Ops dashboard (added 2026-07-06)
+
+Read-only status page at `http://<mac>:8377` (LAN + Tailscale). Two launchd
+units: `com.OWNER.dashboard-gen` (re-renders `~/Claude/.claude/dashboard/index.html`
+from existing pipeline state every 5 min — pure local reads + one 10-min-cached
+z.ai quota GET; never runs the pipeline, never calls GLM) and
+`com.OWNER.dashboard-web` (KeepAlive `python3 -m http.server` via
+`dashboard-web.sh`, serves ONLY the generated site dir). Bind/port in
+`dashboard.conf`; after editing: `launchctl kickstart -k gui/$UID/com.OWNER.dashboard-web`.
+Invariants: no secrets in the site dir, all external text HTML-escaped in
+`dashboard_gen.py`, commands stay in Telegram — the page is eyes only. Debug:
+`.claude/scripts/dashboard-{gen,web}.launchd.err`, or run `dashboard_gen.py` by hand.
+
 ## Where outputs land
 
 | Output | Home |
