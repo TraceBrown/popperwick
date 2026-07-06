@@ -1,0 +1,84 @@
+---
+name: vault-run-and-operate
+description: Load at the start of any conductor session in this vault, or when running its standard workflows — the session-start routine, GLM delegation and fan-out patterns, the book pipeline, Reddit/YouTube/web research commands, storm/roast/grilling triggers, and where every output lands. The day-to-day operating manual.
+---
+
+# Vault Run & Operate
+
+The operating manual for a conductor session in `~/Claude`. Audience: a cold-starting Sonnet/Opus session with full repo access and zero session memory.
+
+**Terms used throughout:** a **conductor session** is any Claude Code session working in `~/Claude` under CLAUDE.md's instructions (that's you). **`glm-do`** is a bash wrapper at `~/.local/bin/glm-do` that sends one headless text task to the cheap GLM 5.2 model and prints the result — GLM has no tools, so you always pipe content IN. **`rdt`** is a standalone Reddit CLI (pipx-installed, cookie-authenticated). **SCRATCHPAD** means the session-specific scratchpad directory listed in your system prompt ("Scratchpad Directory"); if none is listed, `mktemp -d`. **F-codes** (F5, F9…) are incident entries in `vault-failure-archaeology`.
+
+## Session-start routine
+
+1. If the date changed since the last dated Changelog entry: write yesterday's entry FIRST (from context/HANDOFF files, don't re-read everything), do a quick wikilink pass, then take the user's prompt (CLAUDE.md day-boundary rule).
+2. Check for a `HANDOFF - *.md` at vault root — a parked task with a pickup queue takes precedence over guessing.
+3. `git -C ~/Claude status --short` — know what's uncommitted before you add to it.
+4. Expect the **Stop hook** to fire once per session if research files are newer than the Trading Plan — answer with a rule or an explicit stated null, never a fabricated rule.
+
+## GLM delegation (the bread-and-butter pattern)
+
+```bash
+cd <SCRATCHPAD>                              # NEVER vault cwd — hook contamination (F5)
+curl -sL -A "Mozilla/5.0" "$URL" -o page.html    # you fetch; GLM has no tools
+sed -E 's/<script[^>]*>[^<]*<\/script>//g; s/<[^>]+>/ /g' page.html | glm-do 'Extract exactly ... Under 400 words.' > out.txt
+# fan-out (parallel):
+cat a.txt | glm-do "$PROMPT" > sum_a.txt & cat b.txt | glm-do "$PROMPT" > sum_b.txt & wait
+# harder reasoning: glm-do --max "..."
+```
+Rules: pipe raw bytes (don't read big sources into your own context first); verify every load-bearing output claim by grepping the raw file (`vault-validation-and-qa` Recipe 1); long jobs need explicit Bash timeouts (default 2min kills them).
+
+## Research commands that work (all proven)
+
+```bash
+# YouTube transcript (curl/WebFetch are blocked for YT):
+source ~/.agent-reach-venv/bin/activate
+yt-dlp --write-sub --write-auto-sub --sub-lang en --skip-download -o "name_%(id)s" "https://youtu.be/<ID>"
+grep -v "^WEBVTT\|-->" name_*.vtt | sed -E 's/<[^>]+>//g' | awk '!seen[$0]++' > clean.txt   # dedupe captions
+
+# Reddit (READ-ONLY, always):
+rdt search "query" --limit 10        # also: rdt read POST_ID / rdt sub NAME / rdt popular
+rdt status --json                    # auth check
+
+# Platform routing map:
+source ~/.agent-reach-venv/bin/activate && agent-reach doctor --json
+# exact per-platform syntax: ~/.claude/skills/agent-reach/references/{social,video,search,...}.md — consult, don't guess
+
+# Papers: fetch PDF → pdftotext → GLM. SSRN blocks bots; hunt author-hosted mirrors.
+pdftotext paper.pdf paper.txt && cat paper.txt | glm-do "$EXTRACT_PROMPT"
+```
+
+## The book pipeline (Learning/)
+
+1. User drops owned files in `Learning/_source_books/` (or you copy from ~/Downloads with clean slugs, on request).
+2. General pass: `cd ~/Claude/Learning && python3 notebooklm_batch.py` — idempotent, self-pacing, one notebook per file → `Notes/<slug>.md`, `Quiz/<slug>-quiz.md`, `Flashcards/<slug>-flashcards.md`. Books sequential, never parallel (rate limits).
+3. Focused/hard pass (the two-pass convention — a second, domain-targeted pass per book): reuse the same notebook (`notebooklm list --json`, match title; NO re-upload), then `notebooklm generate report --format study-guide "<focus description>"`, `notebooklm generate quiz --difficulty hard "<desc>"`, `notebooklm generate flashcards --difficulty hard "<desc>"`, each `--wait --timeout 600 --retry 4`, ~15s apart; download with `notebooklm download <type> <dest> --latest --force` to `<slug>-<focus>*` files. Precedent + cross-linking style: `Learning/Notes/flash-boys-hft-mechanics.md`.
+4. QA per `vault-validation-and-qa` Recipe 4. Flashcards must be spaced-repetition format (`#flashcards` tag, multiline `?` separator).
+5. **Login is user-only. Never `notebooklm login`.**
+
+## Heavier instruments
+
+- `storm-research <topic>` — 4-phase verified briefing → `storm-reports/<slug>-briefing.html`. Costs ~9-11 subagents; can exhaust the session pool (F9) — have the GLM-pipe fallback ready for verification.
+- `/roast <idea>` — 5-persona stress test with GO/RESHAPE/KILL verdict.
+- `grilling` — pre-work interview for large ambiguous tasks.
+- Fable audits — user-triggered via `/model claude-fable-5`; prompt pattern that worked: context/why → negative constraints → prioritized tasks → delegation instructions → "verdict + one-line why + citation" output shape. Never ask Fable to explain its reasoning (triggers refusal/rerouting).
+
+## Where outputs land
+
+| Output | Home |
+|---|---|
+| Paper/article reviews | `Futures/Strategy Article Reviews.md` (append, follow its format) |
+| Falsifiable rules / nulls | `Journal/Trading Plan.md` |
+| Trade/backtest evidence | `Journal/Trades/`, `Journal/Backtests/` (naming: `YYYY-MM-DD-rule-name.ext`) |
+| Storm reports | `storm-reports/` |
+| Book study artifacts | `Learning/{Notes,Quiz,Flashcards}/` |
+| Temp/intermediate | session scratchpad ONLY — never `/tmp`, never the vault |
+| Day summary | `Changelog.md` (day-boundary rule) |
+
+## When NOT to use this skill
+
+Permission questions → `vault-change-control`. Broken tools → `vault-debugging-playbook`. Judging research quality → `vault-research-methodology` / `vault-validation-and-qa`.
+
+## Provenance and maintenance
+
+Written 2026-07-04; every command block executed successfully in real sessions within the prior 72h. Re-verify fastest-drifting bits: `agent-reach doctor --json` (backends get swapped upstream), `rdt status --json` (cookie expiry), the batch script's flags (`python3 ~/Claude/Learning/notebooklm_batch.py --help`).
