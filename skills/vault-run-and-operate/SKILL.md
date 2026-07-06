@@ -62,6 +62,7 @@ pdftotext paper.pdf paper.txt && cat paper.txt | glm-do "$EXTRACT_PROMPT"
 - `/roast <idea>` — 5-persona stress test with GO/RESHAPE/KILL verdict.
 - `grilling` — pre-work interview for large ambiguous tasks.
 - Fable audits — user-triggered via `/model claude-fable-5`; prompt pattern that worked: context/why → negative constraints → prioritized tasks → delegation instructions → "verdict + one-line why + citation" output shape. Never ask Fable to explain its reasoning (triggers refusal/rerouting).
+- Fable discipline (2026-07-06 frontier scan, community-cross-confirmed): effort `high` is the sweet spot; `xhigh` only for architecture/migration/final-review-class judgment; hand it a written spec, ask for "conclusion, evidence, tradeoffs, risks, next action"; frame security topics defensively ("authorized, remediation") or expect refusal/reroute. Quota shape: Fable owns planning + adversarial review; mechanical prep and edits go to cheaper models first ("Fable sandwich"). Post-2026-07-07 Fable bills as usage credits — conserve accordingly.
 
 ## Ops dashboard (added 2026-07-06)
 
