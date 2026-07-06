@@ -16,6 +16,12 @@ The operating manual for a conductor session in `~/Claude`. Audience: a cold-sta
 3. `git -C ~/Claude status --short` — know what's uncommitted before you add to it.
 4. Expect the **Stop hook** to fire once per session if research files are newer than the Trading Plan — answer with a rule or an explicit stated null, never a fabricated rule.
 
+## Git remote (since 2026-07-06)
+
+Private backup remote exists (`origin` → github.com/OWNER/private-vault).
+**After any commit, `git push`** — a commit that only exists locally protects
+nothing. Never force-push; never change repo visibility.
+
 ## GLM delegation (the bread-and-butter pattern)
 
 ```bash
