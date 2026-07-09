@@ -12,7 +12,7 @@ The operating manual for a conductor session in `~/Claude`. Audience: a cold-sta
 ## Session-start routine
 
 1. If the date changed since the last dated Changelog entry: write yesterday's entry FIRST (from context/HANDOFF files, don't re-read everything), do a quick wikilink pass, then take the user's prompt (CLAUDE.md day-boundary rule).
-2. Check for a `HANDOFF - *.md` at vault root — a parked task with a pickup queue takes precedence over guessing.
+2. Check for a `HANDOFF - *.md` at vault root — a parked task with a pickup queue takes precedence over guessing (skip any whose title or banner says COMPLETED/DONE).
 3. `git -C ~/Claude status --short` — know what's uncommitted before you add to it.
 4. Expect the **Stop hook** to fire once per session if research files are newer than the Trading Plan — answer with a rule or an explicit stated null, never a fabricated rule.
 
