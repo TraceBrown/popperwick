@@ -59,6 +59,7 @@ Settled battles. Check here before spending tokens re-deriving any of these. For
 - **Raw tick-level OFI as a retail signal** — decays in ~1s on E-mini (Takahashi); HFT-only band.
 - **claude-mem / GSD / Superpowers adoption** — evaluated, skipped with reasons (memory-philosophy conflict; redundancy; coding-workflow mismatch). Re-open only with a new need, not a new mood.
 - **Generic 5-min OHLCV signal families on MNQ** (ORB, liquidity-grab fades, gap fades, volume spikes) — structurally below friction per the Mesfin falsification study (with quality caveats documented in the review).
+- **London Strategic Edge as a free CME-futures / Databento alternative** — TESTED 2026-07-09 with a live-key catalog probe (`Sources/LSE/test_lse_viability.py`): its entire futures universe is **Eurex/European (54 instruments, 0 CME)** — no MES/ES/NQ exist there, and even Eurex depth is ~1yr. LSE is a fine free source for US stocks/FX/crypto/options/macro, but **not futures**. Databento stays pinned for Rules 003/004; don't re-pitch LSE as the futures data layer. Full write-up: [[Sources/LSE/Reference]].
 
 ## When NOT to use this skill
 
