@@ -37,7 +37,7 @@ Reading anything; web search/fetch; running documented read-only diagnostics (`r
 ## The recording routine (how changes become durable)
 
 1. **Wikilinks at write time** — link new/edited notes to related notes in the same turn, not later.
-2. **Changelog at day boundary** — do NOT write `Changelog.md` incrementally. At the start of the first session on a new calendar day, write the previous day's entry from session memory, do a linking pass, THEN take the user's prompt. (Exception used in practice: when deliberately parking a large task, write the day's entry at park time while context is hot.)
+2. **Changelog at day boundary** — do NOT write the changelog incrementally. At the start of the first session on a new calendar day, write the previous day's entry from session memory as `Changelog/YYYY-MM-DD.md` + one summary line at the top of the `Changelog.md` index (structure adopted 2026-07-09, user), do a linking pass, THEN take the user's prompt. (Exception used in practice: when deliberately parking a large task, write the day's entry at park time while context is hot.)
 3. **Git commits when the user asks, or at natural completion points with user awareness.** Before any commit: `git status --short`, inspect anything unexpected, and check no file contains a secret even if the name looks innocent. Snapshot (as of 2026-07-04, re-derive per the maintenance section — don't trust this line): the repo ran ~2 days behind the changelog; that lag is a known weak point, not a convention.
 
 ## When NOT to use this skill
