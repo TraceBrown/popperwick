@@ -11,6 +11,11 @@ The operating manual for a conductor session in `~/Claude`. Audience: a cold-sta
 
 ## Session-start routine
 
+0. **Succession + freeze check (2026-07-10):** if you are a new conductor (or
+   unsure), read `HANDOFF - Conductor Succession.md` at vault root FIRST —
+   who conducts, the bookend review protocol, and the first-30-tasks log all
+   live there. The **build freeze** (rows, not files — canonical text in
+   CLAUDE.md) binds every session; `vault-change-control` Gate 0 mirrors it.
 1. If the date changed since the last dated Changelog entry: write yesterday's entry FIRST (from context/HANDOFF files, don't re-read everything), do a quick wikilink pass, then take the user's prompt (CLAUDE.md day-boundary rule).
 2. Check for a `HANDOFF - *.md` at vault root — a parked task with a pickup queue takes precedence over guessing (skip any whose title or banner says COMPLETED/DONE).
 3. `git -C ~/Claude status --short` — know what's uncommitted before you add to it.
@@ -93,7 +98,7 @@ Invariants: no secrets in the site dir, all external text HTML-escaped in
 | Storm reports | `storm-reports/` |
 | Book study artifacts | `Learning/{Notes,Quiz,Flashcards}/` |
 | Temp/intermediate | session scratchpad ONLY — never `/tmp`, never the vault |
-| Day summary | `Changelog.md` (day-boundary rule) |
+| Day summary | `Changelog/YYYY-MM-DD.md` day file + one index line at the top of root `Changelog.md` (day-boundary rule; 2026-07-09 structure) |
 
 ## When NOT to use this skill
 

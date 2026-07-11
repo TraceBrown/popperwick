@@ -7,6 +7,20 @@ description: Load BEFORE making any change to this vault beyond routine note con
 
 How changes are classified, gated, and recorded in this vault. The vault is `~/Claude` — an Obsidian vault, a git repo, and the working directory of a research-conductor system. "The conductor" throughout means the Claude session operating the vault under CLAUDE.md's instructions — i.e., you, probably a Sonnet- or Opus-class session. This skill exists so you don't need a smarter model to know what you're allowed to do.
 
+## Gate 0 — the build freeze (overrides every row below; canonical text in CLAUDE.md)
+
+**Build freeze (2026-07-07, user-approved):** until the trackers have real rows
+(trades/backtests and the other trackers), sessions produce **rows,
+not files** — no new watchers, skills, dashboards, or pipelines except:
+activating already-parked plans on the user's go, fixing bugs you reproduced
+yourself, routine content, and work *demonstrably required to land a row,
+time-boxed to minutes* (the freeze is a conversion rule, not a construction
+ban). When a row below says "None. Do it." and the freeze says no — the freeze
+wins. Two ratified exceptions live in CLAUDE.md: **calendar create/update** for
+personal workflows (report each write; deletions ask first), and the
+**Obsidian Local REST API plugin's own `data.json`** as the sole credential
+carve-out (gitignored, localhost-only — see non-negotiable 1).
+
 ## Change classes
 
 | Class | Examples | Gate |
