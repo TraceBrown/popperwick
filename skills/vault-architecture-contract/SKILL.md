@@ -9,7 +9,7 @@ The load-bearing design decisions of this system, with rationale. If a proposed 
 
 ## The system in one paragraph
 
-`~/Claude` is simultaneously (a) an Obsidian vault, (b) a git repo, and (c) the working directory of a **research conductor**: a Claude session (normally Sonnet; sometimes Opus; Fable for judgment audits) that frames questions, searches, verifies, and synthesizes — while delegating bulk reading/summarizing to **GLM 5.2**, a cheaper model invoked headlessly via the `glm-do` CLI. The project's proving ground is evidence-based retail futures trading research (MES/MNQ), but the vault's declared scope is a general "companion that learns with me" — trading is the first domain, not the boundary (that's why the vault is named `Claude`, not `Futures`).
+`~/Claude` is simultaneously (a) an Obsidian vault, (b) a git repo, and (c) the working directory of a **research conductor**: a Claude session (Opus 4.8 by default; Fable 5 for freeze-grade escalation; routing per MODEL-SWITCHING.md "Model-selection doctrine", frozen 2026-07-15) that frames questions, searches, verifies, and synthesizes — while delegating bulk reading/summarizing to **GLM 5.2**, a cheaper model invoked headlessly via the `glm-do` CLI. The project's proving ground is evidence-based retail futures trading research (MES/MNQ), but the vault's declared scope is a general "companion that learns with me" — trading is the first domain, not the boundary (that's why the vault is named `Claude`, not `Futures`).
 
 ## Invariant 1 — The delegation ladder
 
