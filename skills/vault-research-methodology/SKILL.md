@@ -46,7 +46,7 @@ A finding that stays a finding has not done its job. The Stop hook (`close-the-l
 
 ## Where good ideas have actually come from here
 
-Historical pattern worth knowing (mined from Changelog + reviews): the productive ideas came from (a) *boundary-condition papers* that killed something cleanly (Takahashi's 1-second decay; Heston's t>9.6-but-unprofitable), (b) *adversarial passes* over our own system (roast → Journal; Fable audits → corrections), and (c) *the one mechanical claim in a sea of narrative* (Market Profile's "80% rule" — the only testable sentence in a 40-year-old framework, now candidate Rule 004). The unproductive pattern: collecting more affirmative papers/books before converting the last batch into rules.
+Historical pattern worth knowing (mined from Changelog + reviews): the productive ideas came from (a) *boundary-condition papers* that killed something cleanly (Takahashi's 1-second decay; Heston's t>9.6-but-unprofitable), (b) *adversarial passes* over our own system (roast → Journal; Fable audits → corrections), and (c) *the one mechanical claim in a sea of narrative* (Market Profile's "80% rule" — the only testable sentence in a 40-year-old framework, now candidate Rule 004; 2026-07-15 caveat: the sentence is retail folklore, not Dalton's — his text claims only "a good possibility"). The unproductive pattern: collecting more affirmative papers/books before converting the last batch into rules.
 
 ## Numbers you must respect when evaluating any trading idea
 
