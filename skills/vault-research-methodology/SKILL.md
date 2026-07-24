@@ -64,6 +64,23 @@ Historical pattern worth knowing (mined from Changelog + reviews): the productiv
 
 **Evidence vintage (for any historical narrative or cycle claim):** label every source `contemporaneous` / `near_contemporaneous` / `hindsight`, machine-readably; if the then-known information set cannot be reconstructed, the output is `not_testable` or a NARROWER claim — never a conclusion quietly built from hindsight summaries. Cohorts include the delisted/failed members when sourceable.
 
+## Imported craft — client-library round (2026-07-24, [[Sources/Kimi Client-Skills Review (2026-07-24)]]; deweaponized)
+
+**Decision-robustness aid** (for any weighted comparison between
+options/strategies/tools — explicitly a DECISION AID, never evidence): first
+apply hard constraints as a prefilter (an option failing a must-have never
+reaches scoring); then score with declared weights; then **perturb** — vary
+each weight and each uncertain score and report the **reversal points**
+(what change flips the winner). The output states its subjectivity plainly:
+scores are judgments dressed in decimals; the perturbation table is what
+makes the judgment honest.
+
+**Terminology hygiene** (when a research area's vocabulary starts drifting):
+maintain a small MANUAL table — canonical term · definition · discouraged
+aliases · unresolved ambiguities (flagged, not silently resolved). Never
+auto-generated, never auto-rewritten; any term that touches frozen Trading
+Plan law changes only via dated addendum under authority.
+
 ## When NOT to use this skill
 
 Executing the current flagship campaign → `trading-rule-validation-campaign`. The statistical recipes themselves → `trading-proof-toolkit`. What counts as verified evidence procedurally → `vault-validation-and-qa`.
