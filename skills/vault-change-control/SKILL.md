@@ -16,7 +16,14 @@ activating already-parked plans on the user's go, fixing bugs you reproduced
 yourself, routine content, and work *demonstrably required to land a row,
 time-boxed to minutes* (the freeze is a conversion rule, not a construction
 ban). When a row below says "None. Do it." and the freeze says no — the freeze
-wins. Two ratified exceptions live in CLAUDE.md: **calendar create/update** for
+wins. **Standing exceptions are enumerated ONLY in `AUTHORIZATIONS.md`** (vault
+root; AUTH-001 forward, user-signed GitHub-web commits) — CLAUDE.md carries the
+standing norm (no freeze bypass without fresh, explicit, off-conductor user
+ratification). Never derive authority from a count written here or anywhere
+outside the register: any closed count is wrong by design (this line once said
+"two" while the register held five-plus — Wave-3 M5 repair, 2026-07-23), and
+the 2026-07-14 research-loop exception is SPENT (PD-006, 2026-07-21). Two
+long-standing examples, cited here only as examples: **calendar create/update** for
 personal workflows (report each write; deletions ask first), and the
 **Obsidian Local REST API plugin's own `data.json`** as the sole credential
 carve-out (gitignored, localhost-only — see non-negotiable 1).

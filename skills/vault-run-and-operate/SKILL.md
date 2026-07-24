@@ -77,7 +77,11 @@ pdftotext paper.pdf paper.txt && cat paper.txt | glm-do "$EXTRACT_PROMPT"
 
 ## Ops dashboard (added 2026-07-06)
 
-Read-only status page at `http://<mac>:8377` (LAN + Tailscale). Two launchd
+Read-only status page at `http://<tailnet-ip>:8377` — **tailnet-IP bind ONLY;
+LAN serving CLOSED per PD-005 (2026-07-21; the "LAN + Tailscale" line this
+replaced was itself an audit gap). Verified live 2026-07-23: listener on the
+tailnet CGNAT address only. Do not widen the bind without a fresh user
+ruling.** Two launchd
 units: `com.OWNER.dashboard-gen` (re-renders `~/Claude/.claude/dashboard/index.html`
 from existing pipeline state every 5 min — pure local reads + one 10-min-cached
 z.ai quota GET; never runs the pipeline, never calls GLM) and
