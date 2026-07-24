@@ -104,6 +104,13 @@ Invariants: no secrets in the site dir, all external text HTML-escaped in
 | Temp/intermediate | session scratchpad ONLY — never `/tmp`, never the vault |
 | Day summary | `Changelog/YYYY-MM-DD.md` day file + one index line at the top of root `Changelog.md` (day-boundary rule; 2026-07-09 structure) |
 
+## Imported craft — context-economy delegation (2026-07-24, from the Kimi plugin-review corpus — [[Sources/Kimi Plugin-Skill Review (2026-07-24)]])
+
+Everything pasted into a dispatch prompt stays resident in the conductor's context forever. For multi-dispatch work (builder rounds, tri-model waves, fan-outs):
+- **Briefs and reports travel as FILES**, not prompt paste — the dispatch carries a path; the worker writes its report to a file and returns ≤15 lines (status, commits/paths, one-line result). The conductor reads the report file only when adjudicating it.
+- **Keep a durable progress ledger** for any sequence longer than ~3 dispatches (which steps are done, verified, blocked — one line each). After context compaction, **trust the ledger and git log over your own recollection** — the upstream corpus documents controllers re-dispatching entire completed sequences after losing their place, their single most expensive observed failure.
+- Package diffs/artifacts for reviewers by explicit range (base..head), never "last commit" shorthand — multi-commit tasks silently truncate.
+
 ## When NOT to use this skill
 
 Permission questions → `vault-change-control`. Broken tools → `vault-debugging-playbook`. Judging research quality → `vault-research-methodology` / `vault-validation-and-qa`.

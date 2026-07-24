@@ -57,6 +57,16 @@ A rule is well-formed iff: Statement is falsifiable as written (numbers, window,
 - **Two storm reports** in `storm-reports/`, both carrying per-citation verification tags — treat their "Safe to assert" sections as pre-verified claims.
 - **Reported-only (NOT golden)**: anything in `Futures/GLM - Online.md` (a model's evaluation, never independently verified); abstract-only reviews (Griffin et al., Sun et al., Rosa 2022 — flagged low-confidence in the reviews file); all vendor-sourced stats (e.g. the "7% prop payout" figure).
 
+## Imported craft (2026-07-24, from the Kimi plugin-review corpus — [[Sources/Kimi Plugin-Skill Review (2026-07-24)]]; deweaponized)
+
+**Recipe 6 — Cross-artifact number QC.** Before any document of record ships: the same metric carries the same value, unit, and basis EVERYWHERE it appears (note ↔ ledger ↔ report ↔ summary); and **wording strength may not exceed the evidence class** — a claim labeled `estimate`/`assumption` never wears verbs like "confirmed"/"proven". Findings are pass / fail / waived-with-reason; a waiver names its owner.
+
+**Recipe 7 — Adversarial document reading (any persuasive source: seller docs, vendor claims, pitch material, glossy papers).** Everything is a `source_claim` until independently tied out; rebuild the load-bearing bridge (EBITDA-style reconciliations, headline metrics) YOURSELF rather than accepting the document's; maintain a red-flag register (severity-tagged) and a question register (each owned); never invent a source to clear a finding.
+
+**Recipe 8 — Red-green-VERIFIED regression proof.** A regression test is not done when it passes: write → run (pass) → **revert the fix → run (MUST fail)** → restore → run (pass). And the per-claim proof table: "linter passed" ≠ build passes; "agent reported success" ≠ success — check the VCS diff independently.
+
+**Recipe 9 — Reviewer-dispatch hygiene (for any commissioned review).** Never pre-judge findings in a dispatch prompt ("don't flag X", "at most Minor", "the plan chose this" = you are pre-judging — stop); the reviewed party's report and rationales are CLAIMS, not evidence — a stated rationale never downgrades a finding's severity; give reviewers an explicit "⚠ cannot verify from what I was given" lane instead of pressure to broaden scope or guess.
+
 ## When NOT to use this skill
 
 Choosing what to research or whether a finding merits a rule → `vault-research-methodology`. The statistical validation of trading rules themselves (backtest hygiene, sample size) → `trading-proof-toolkit`.

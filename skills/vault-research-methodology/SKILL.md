@@ -55,6 +55,15 @@ Historical pattern worth knowing (mined from Changelog + reviews): the productiv
 - Statistical ≠ tradeable: a t-stat over 9 can still lose money after the spread (Heston et al.).
 - The cost bar is codified as Trading Plan **Rule 001** — every rule's expected edge must clear it.
 
+## Imported craft (2026-07-24, from the Kimi plugin-review corpus — [[Sources/Kimi Plugin-Skill Review (2026-07-24)]]; deweaponized per Sol's rule)
+
+**Replication discipline (for any paper/claim we reproduce):**
+- Keep a **claim ledger**: every target claim gets a fidelity label — `exact` / `near` / `conceptual` / `not_testable` — and a **data-equivalence grade A–E** vs the paper's data; the weakest *material* grade caps the replication verdict. A matching sign alone is `directional_only`; several directional matches never sum to a numerical replication claim.
+- **Freeze before OOS:** hash code+parameters+data-map+costs and record the freeze time BEFORE looking at any out-of-sample result. Keep three OOS species separate, never merged: `sample_extension` (same market, later data), `post_publication` (after dissemination + realistic implementation lag), `transport` (different market/universe — ours, usually MES/MNQ).
+- **Discrepancy ladder** (diagnose in order, record the FIRST material driver): paper version/vintage → universe/survivorship → prices/actions/units → signal availability+lags → filtering/weighting → inference (overlapping obs, SEs) → costs → implementation defect — with integrity tests run both before AND after data reconciliation (defect-last is unsafe as a pure ordering).
+
+**Evidence vintage (for any historical narrative or cycle claim):** label every source `contemporaneous` / `near_contemporaneous` / `hindsight`, machine-readably; if the then-known information set cannot be reconstructed, the output is `not_testable` or a NARROWER claim — never a conclusion quietly built from hindsight summaries. Cohorts include the delisted/failed members when sourceable.
+
 ## When NOT to use this skill
 
 Executing the current flagship campaign → `trading-rule-validation-campaign`. The statistical recipes themselves → `trading-proof-toolkit`. What counts as verified evidence procedurally → `vault-validation-and-qa`.
