@@ -111,6 +111,14 @@ Everything pasted into a dispatch prompt stays resident in the conductor's conte
 - **Keep a durable progress ledger** for any sequence longer than ~3 dispatches (which steps are done, verified, blocked — one line each). After context compaction, **trust the ledger and git log over your own recollection** — the upstream corpus documents controllers re-dispatching entire completed sequences after losing their place, their single most expensive observed failure.
 - Package diffs/artifacts for reviewers by explicit range (base..head), never "last commit" shorthand — multi-commit tasks silently truncate.
 
+## Imported craft — finance-directory round (2026-07-24, [[Sources/ChatGPT Plugin Directory — Finance Review (2026-07-24)]]; Sol-narrowed; deweaponized)
+
+**Four-line human-facing run summary** — for reports to the user, never
+prepended to raw logs, JSON, or machine output: What ran / Verified
+observation / Bounded interpretation or status / Next gate and owner. An
+invalid or failed run says "no inference" in the third line — never a soft
+reading of partial output.
+
 ## When NOT to use this skill
 
 Permission questions → `vault-change-control`. Broken tools → `vault-debugging-playbook`. Judging research quality → `vault-research-methodology` / `vault-validation-and-qa`.
