@@ -23,10 +23,16 @@ obey the same law as its prose:
   risks turning the verdict into a game score"; Kimi: "terminal aesthetics
   flatter everything... make a D feel like a feature launch." A design that
   softens a bad verdict is a FAILED design regardless of polish.
-- **Render only from provided data.** Every number on a page traces to the
-  embedded dataset (`const DATA = {...}`, embedded verbatim). Never invent,
-  extrapolate, or "improve" a figure. A module without data ships as a
-  labeled stub ("interactive module — not wired"), never with fake output.
+- **Render only from identified data.** Every displayed number must trace
+  to an identified authoritative input plus a documented deterministic
+  transformation. Self-contained static artifacts embed the required source
+  snapshot (`const DATA = {...}`) or a lossless documented projection;
+  derived values must be reproducible from it. Never invent, extrapolate,
+  or "improve" a figure. A module without data ships as a labeled stub
+  ("interactive module — not wired"), never with fake output. (Wording
+  Sol-revised 2026-07-25: the verbatim-embed form is the static-page case,
+  not the general law — dashboards and derived figures obey the traceable+
+  reproducible form.)
 - **Omit, never fabricate.** Insufficient data for a chart/cell → omit the
   artifact and say so (same rule as vault-validation-and-qa's typed
   missingness).
@@ -81,23 +87,43 @@ reference dispatched clean after the full one 400'd).
 
 ## 4. Pre-publish verification battery (run EVERY time, before Artifact publish)
 
-Conductor-run, on the delivered HTML — publish only after all four pass:
+Conductor-run, on the delivered HTML. **Sol-reclassified 2026-07-25: the
+greps are a PRELIMINARY LINT, not proof** — actual no-external-request
+enforcement comes from the artifact platform's strict CSP (or a documented
+equivalent); when the target host has no CSP, a rendered network audit
+showing zero external requests is required before any claim of
+self-containment.
 
 ```bash
-# 1 external-reference sweep (expect ZERO hits; the SVG xmlns namespace
-#   constant "http://www.w3.org/2000/svg" is the one known benign hit)
-grep -nE "https?://|@import|fetch\(|XMLHttpRequest|<link|src=\"http|@font-face" page.html
+# 1 external-reference LINT (allowlist: exact benign namespace constants
+#   like the SVG xmlns "http://www.w3.org/2000/svg", and data: URIs —
+#   which includes data-URI @font-face embeds; flag everything else,
+#   including CSS url(), srcset, single-quoted attrs, module imports,
+#   WebSocket/EventSource/sendBeacon, and dynamically built URLs)
+grep -nE "https?://|@import|fetch\(|XMLHttpRequest|<link|src=|srcset|url\(|new WebSocket|EventSource|sendBeacon|import\(" page.html
 # 2 script syntax — node --check every <script> block (extract, then check)
-# 3 tag balance — open/close counts for section/div/table/svg/style/script
-# 4 data fidelity — spot-grep the load-bearing figures against the source
-#   dataset (net, rates, counts, the verdict grade); a D stays a D
+# 3 structure — parse with a real HTML parser (nesting validity), not
+#   tag-count balance alone (equal counts can still nest invalidly)
+# 4 data fidelity — a SAMPLED fidelity check: spot-compare the load-bearing
+#   figures against the source dataset (net, rates, counts, the verdict
+#   grade — a D stays a D). Sampling verifies samples; claiming "every
+#   number traces" requires a programmatic data-to-DOM comparison.
 ```
 
-Plus: theme markers present (`prefers-color-scheme` + `data-theme`),
-reduced-motion present, `<title>` names the artifact (it becomes the gallery
-name; keep it stable across redeploys; name the designer/variant when pages
-compete). Publish artifacts as NEW files for concept variants — never
-overwrite a canonical report with a concept.
+Plus rendered checks (viewer or headless) at ~380px and desktop: no
+body-level horizontal overflow; both OS themes AND both explicit
+`data-theme` overrides in both directions; visible keyboard focus;
+effective reduced-motion; contrast sanity. `<title>` names the artifact
+(gallery name; stable across redeploys; name the designer/variant when
+pages compete). Publish concept variants as NEW files — never overwrite a
+canonical report with a concept.
+
+**Publication gate (standing law, restated):** passing this battery is
+necessary but does NOT authorize publication. Publishing, redeploying, or
+replacing any externally visible artifact takes explicit per-instance user
+approval under the external-action gate — private-by-default artifacts of
+the conductor's own work-product are the scoped exception, and anything
+beyond that scope asks first.
 
 ## 5. Rejected defaults (from the panel + house guidance)
 
@@ -119,6 +145,11 @@ verdict/gates mean) belong to the bench docs and `trading-proof-toolkit`.
 ## Provenance and maintenance
 
 Written 2026-07-25 by the Fable 5 conductor under AUTH-006 item 6 (Q2),
-from that week's design-panel records. If a future panel contradicts a rule
-here, update THIS file with a dated correction — the raw panel archives are
-the evidence trail.
+from that week's design-panel records; **Sol-reviewed same night
+(SOUND-WITH-EDITS — all six edits applied: publication gate, data-law
+scoping, lint-vs-CSP reclassification incl. the zero-hits/SVG and
+font-face contradictions, parser-over-tag-counts, rendered-check list,
+sampled-fidelity naming)**. Raw review:
+`.openai/2026-07-25-buildbatch-review-sol.md`. If a future panel
+contradicts a rule here, update THIS file with a dated correction — the
+raw panel archives are the evidence trail.
