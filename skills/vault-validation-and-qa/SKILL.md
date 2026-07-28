@@ -88,6 +88,61 @@ Enumerate the artifacts with `ls ~/Claude/Learning/Notes ~/Claude/Learning/Quiz 
 
 A rule is well-formed iff: Statement is falsifiable as written (numbers, window, instrument); Derived-from links a real reviewed source; Falsified-if states the killing result AND a sample size; expected edge is stated against the Rule 001 cost bar; Status honest (`Untested` until evidence exists). The worked example in `Journal/Trading Plan.md`'s header is the standard.
 
+## Recipe 6 — Correction propagation (added 2026-07-28 from a measured vault-wide audit)
+
+**A correction is not finished when the canonical file is fixed.** It is finished
+when no derived artifact still asserts the old claim. This vault has failed that
+test repeatedly, and the failures are invisible precisely because the canonical
+record looks correct.
+
+**The evidence (one night's audit, 6 confirmed / 5 clean):**
+
+| Correction | Landed | Still asserted stale, where | Gap |
+|---|---|---|---|
+| Rule 002 retired misfounded | 2026-07-16 | `futures-event-study` named it "likely first consumer" | 9 days |
+| Mesfin over-scope | 2026-07-10 | microstructure decay table, failure-archaeology, Strategy Article Reviews ×2 | **18 days** |
+| Takahashi ">95%" | (never explicitly) | microstructure + Strategy Article Reviews — while `hfc3-t1-log` quoted it correctly all along | — |
+| DMI ruled VOID | 2026-07-16 | microstructure's **frontmatter `description:`** | 12 days |
+| Rules 002/003/004 all closed | 07-13→07-16 | campaign skill's Mission line, under a banner saying they were closed | — |
+| Rule 004 refuted | 2026-07-16 | `vault-research-methodology` called it a live "candidate" | 12 days |
+
+**The predictor is process, not importance.** Corrections made inside a formal
+remediation wave or a ruled retirement (**QuantPad closure, PD-006 loop
+retirement, the Wave-4 DMI banner pass**) propagated cleanly — all five clean
+results came from those. Every failure was an **ad-hoc inline correction**: a
+bullet added to `stated-nulls`, a caveat appended to a line. The Mesfin
+correction was *more* consequential to research decisions than the QuantPad
+retirement, and it is the one that rotted for 18 days.
+
+**The procedure — run it the same day the correction lands:**
+
+1. **Grep for the OLD claim, not the new one.** Pick 2–3 distinctive strings from
+   the superseded text (a number, an unusual phrase) and sweep `--include="*.md"`
+   across the whole vault. New wording tells you nothing about what survived.
+2. **Check skill FRONTMATTER `description:` lines separately.** `grep -n
+   "^description:" .claude/skills/*/SKILL.md`. This is the highest-risk surface in
+   the vault and the easiest to miss: a description is the **only** text a session
+   reads when *choosing* a skill, so a stale claim there is absorbed **before** the
+   body that corrects it is ever opened. The DMI survived here for 12 days *while
+   the body carried the correction*, and the ledger row claimed the skills were done.
+3. **A banner does not repair the prose beneath it.** Read the operative lines
+   under any banner you add — Mission statements, tables, "next step" lines. The
+   campaign skill stated three dead rules as its live goal directly below a banner
+   declaring them dead.
+4. **Distrust your own ledger row.** S-046 recorded "corrected across 7 records"
+   and "skill + inventory + conductor memory corrected." It was not. Re-grep;
+   don't read the receipt.
+5. **Fix by completing the story, not deleting the claim.** The refuted 80% rule
+   is the *strongest* example in the methodology skill's list of productive
+   research patterns — pre-registered, run, answered "no." Deleting corrected
+   claims destroys the evidence that the process works. Strike and continue.
+
+**Why this outranks most citation checking.** A wrong citation misleads one
+argument. A stale skill misleads **every future session that loads it**, silently,
+with the vault's own authority behind it — and the sessions most likely to be
+misled are the ones doing exactly what they should: loading the skill instead of
+re-reading the whole record.
+
 ## The golden inventory (verified as of 2026-07-04; **counts audited and corrected 2026-07-28**)
 
 - **Contract math**: MES tick 0.25pt = $1.25 ($5/pt); MNQ tick 0.25pt = $0.50 ($2/pt). CME public specs.
