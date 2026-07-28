@@ -137,6 +137,22 @@ retirement, and it is the one that rotted for 18 days.
    research patterns — pre-registered, run, answered "no." Deleting corrected
    claims destroys the evidence that the process works. Strike and continue.
 
+**Self-test, run the night this recipe was written (2026-07-28, 03:16).** The
+conductor made ~15 corrections that night and then ran step 1 against its own
+work — grepping the **old** wording of twelve of them across the vault.
+**Result: zero propagation failures.** Every hit returned was the superseded text
+quoted *inside its own correction note*, which is the intended state. Contrast
+with the six historical failures in the table above, whose corrections were
+identical in kind but never swept. **The variable is not the correction. It is
+whether anyone ran the sweep.** That is the entire content of this recipe, and it
+takes about ninety seconds:
+
+```bash
+# after any correction: grep the OLD wording, not the new
+grep -rn --include="*.md" -F "<superseded phrase>" . | grep -v "Changelog/"
+grep -n "^description:" .claude/skills/*/SKILL.md   # the highest-risk surface
+```
+
 **Why this outranks most citation checking.** A wrong citation misleads one
 argument. A stale skill misleads **every future session that loads it**, silently,
 with the vault's own authority behind it — and the sessions most likely to be
