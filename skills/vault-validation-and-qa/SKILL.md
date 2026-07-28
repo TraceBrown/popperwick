@@ -48,13 +48,39 @@ Enumerate the artifacts with `ls ~/Claude/Learning/Notes ~/Claude/Learning/Quiz 
 
 A rule is well-formed iff: Statement is falsifiable as written (numbers, window, instrument); Derived-from links a real reviewed source; Falsified-if states the killing result AND a sample size; expected edge is stated against the Rule 001 cost bar; Status honest (`Untested` until evidence exists). The worked example in `Journal/Trading Plan.md`'s header is the standard.
 
-## The golden inventory (verified, as of 2026-07-04)
+## The golden inventory (verified as of 2026-07-04; **counts audited and corrected 2026-07-28**)
 
 - **Contract math**: MES tick 0.25pt = $1.25 ($5/pt); MNQ tick 0.25pt = $0.50 ($2/pt). CME public specs.
 - **Cost anchors**: NinjaTrader free-plan all-in $0.95/side ($1.90/RT) for MES and MNQ, read from their published fee PDF; provisional bar ≈2.5–3.5 MES ticks / 5–8 MNQ ticks per RT (Rule 001; broker statement still pending).
 - **CFTC base rates**: median retail futures trader loses $100–$200; 60th percentile breakeven; MES/MNQ the top-2 retail contracts (Ferko/Mixon/Onur 2024, PDF read directly).
-- **Decay-horizon corpus**: 11 papers reviewed in `Futures/Strategy Article Reviews.md`, each with a verified-findings section; the cross-cutting pattern note there is the settled summary.
-- **Two storm reports** in `storm-reports/`, both carrying per-citation verification tags — treat their "Safe to assert" sections as pre-verified claims.
+- **Decay-horizon corpus**: papers reviewed in `Futures/Strategy Article Reviews.md`, each with a verified-findings section; the cross-cutting pattern note there is the settled summary.
+  > ⚠️ **COUNT CORRECTED 2026-07-28: the entry read "11 papers"; the file now
+  > holds 13 paper reviews** (15 H2 sections minus the cross-cutting summary and
+  > the r/algotrading post-mortem). Additions since the 2026-07-04 verification —
+  > incl. Kurth et al. (arXiv 2607.01550) and Cheung 2026 (arXiv 2607.12248v2) —
+  > **were never covered by that verification pass and are NOT golden by
+  > inheritance.**
+- **Storm reports** in `storm-reports/`.
+  > ⚠️ **TRUST GRANT CORRECTED 2026-07-28 — this entry was laundering trust.**
+  > It read: *"Two storm reports… both carrying per-citation verification tags —
+  > treat their 'Safe to assert' sections as pre-verified claims."* **Six reports
+  > now exist and only three carry a "Safe to assert" section at all**
+  > (`flash-boys-hft-market-structure`, `hermes-agent-adoption`,
+  > `mind-over-markets-auction-theory`); three have none
+  > (`claude-code-foundation-frontier`, `trading-and-exchanges-execution`,
+  > `wyckoff-2-0-falsifiability`). A reader applying the old sentence to the
+  > folder would have treated reports written *after* the verification date as
+  > pre-verified. **Only a report whose claims were verified in a dated pass is
+  > golden, and the presence of a "Safe to assert" heading is NOT itself
+  > evidence that such a pass happened.** Check the report's own provenance line.
+
+**STRUCTURAL RULE (added 2026-07-28 after this defect):** a golden inventory
+**enumerates named artifacts with dates — it never counts a directory.** Counts
+decay silently as the directory grows, and the decay direction is always toward
+granting unearned trust. **Anything not explicitly named and dated here is NOT
+golden, regardless of where it sits or what headings it carries.** New artifacts
+enter the inventory only by a fresh dated verification pass, never by being
+filed in a blessed folder.
 - **Reported-only (NOT golden)**: anything in `Futures/GLM - Online.md` (a model's evaluation, never independently verified); abstract-only reviews (Griffin et al., Sun et al., Rosa 2022 — flagged low-confidence in the reviews file); all vendor-sourced stats (e.g. the "7% prop payout" figure).
 
 ## Imported craft (2026-07-24, from the Kimi plugin-review corpus — [[Sources/Kimi Plugin-Skill Review (2026-07-24)]]; deweaponized)
