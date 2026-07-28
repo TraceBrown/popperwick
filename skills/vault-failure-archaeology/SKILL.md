@@ -55,6 +55,32 @@ Settled battles. Check here before spending tokens re-deriving any of these. For
 
 - **Polymarket 5-minute binaries** — near-random, negative EV after fees; steered away hard in founding docs.
 - **Congressional-trades signals for intraday futures** — wrong horizon, wrong instrument.
+**F20 — The Codex trust pin is not the control it was assumed to be (TESTED 2026-07-28).**
+After the 2026-07-17 second-conductor incident (an interactive Sol pane in a *trusted*
+vault cwd re-zeroed a canonical file, then committed and pushed impersonating the
+conductor), `~/.codex/config.toml` gained
+`[projects."/Users/OWNER/Claude"] trust_level = "untrusted"`. Its runtime
+behaviour sat "unproven" in the queue from Wave-2 until a conductor re-audit declared
+it **"unverifiable by design"** — an argument Sol demolished and a test then refuted.
+→ **Documented behaviour (official Codex config reference, verified verbatim):**
+*"Untrusted projects skip project-scoped `.codex/` layers, including project-local
+config, hooks, and rules."* **It governs config loading, not filesystem access;
+`sandbox_mode` governs that.**
+→ **Measured** (disposable dir, isolated `CODEX_HOME`, `codex debug prompt-input`, no
+model call): the project's **root `AGENTS.md` is loaded into the model-visible prompt
+under BOTH `trusted` and `untrusted`.**
+→ **Consequence for this vault:** `~/Claude/AGENTS.md` is the cross-tool mirror of
+`CLAUDE.md` and carries the full conductor doctrine. **The pin would not stop an agent
+launched in the vault cwd from being instructed as the conductor** — plausibly the
+mechanism of the very incident it was added to prevent.
+→ **Status:** the door is closed by the **procedural** rule ("never launch an agent in
+`~/Claude`") plus **enforced `--sandbox read-only`**, NOT by the pin. Keep the pin as
+narrow defence-in-depth against project-local config; **never cite it as a read,
+write, or instruction barrier.**
+→ **Method note worth reusing:** `codex debug prompt-input` renders exactly what a
+model would see **without invoking one** — the cheapest available instrument for
+"what would this agent be told?", and it needs no live agent to answer.
+
 - **TradingView scraping / unofficial API** — ToS-banned, account-ban risk (see `vault-change-control`).
 - **Raw tick-level OFI as a retail signal** — decays in ~1s on E-mini (Takahashi); HFT-only band.
 - **claude-mem / GSD / Superpowers adoption** — evaluated, skipped with reasons (memory-philosophy conflict; redundancy; coding-workflow mismatch). Re-open only with a new need, not a new mood.
