@@ -153,6 +153,27 @@ grep -rn --include="*.md" -F "<superseded phrase>" . | grep -v "Changelog/"
 grep -n "^description:" .claude/skills/*/SKILL.md   # the highest-risk surface
 ```
 
+**6. Never designate an unaudited file as "ground truth" for an audit.** Learned
+the hard way at 04:00 on 2026-07-28. A claims-audit of four skills was run with
+`CLAUDE.md` supplied as authoritative ground truth. It flagged
+`vault-design-craft`'s provenance line ("written 2026-07-25 by the **Fable 5**
+conductor") as wrong at **confidence 98**, because CLAUDE.md said Opus 4.8 had been
+conducting since 2026-07-13.
+
+**The skill was right and the ground truth was stale.** Every commit from 2026-07-23
+through 2026-07-28 carries `Conduct on Fable 5.` — measured from the trailers, not
+read from a file. **Designating an unaudited document as ground truth propagates its
+errors into the very audit meant to catch them**, and hands them a confidence score.
+
+Two consequences worth keeping:
+- **Prefer a *measurable* authority over a *written* one.** "What do the commit
+  trailers say" beats "what does the doc claim." Where a measurable authority
+  exists, the audit should compute it, not quote it.
+- **Fix by pointing, not restating.** CLAUDE.md's line was not repaired by swapping in
+  "Fable 5" — that would rot identically in a fortnight. It now names the trailer as
+  the authority, gives the command to read it, and tells the reader **not to trust the
+  parenthetical**. Apply that shape to any fact the vault does not itself own.
+
 **Why this outranks most citation checking.** A wrong citation misleads one
 argument. A stale skill misleads **every future session that loads it**, silently,
 with the vault's own authority behind it — and the sessions most likely to be
