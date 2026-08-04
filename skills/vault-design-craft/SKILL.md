@@ -172,6 +172,15 @@ recommends something §5 rejects, §5 wins.
 skills directory — if project-level, inside the vault and git-tracked, which
 is a change-control item. See `Pending Decisions/010-external-design-skill-packs.md`.
 
+**Category update (2026-08-04 GitHub-trending sweep):** the pack above is
+still climbing (~24.8k stars, +19.8k that month — mainstream now, not a
+find). A second candidate surfaced: **`Nutlope/hallmark`** (~21.6k stars) —
+57 named anti-slop gates, an `audit` verb that scores existing pages and
+returns a punch list without editing, and a `study` verb that extracts a
+site's design DNA to a portable `design.md` (refuses pixel-clones). Same
+precedence rule applies unchanged; same PD-010 gate for any install. Neither
+installed.
+
 ## When NOT to use this skill
 
 Calibrating how much design INVESTMENT a request deserves is the house
