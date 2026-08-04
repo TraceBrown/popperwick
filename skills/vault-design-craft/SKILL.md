@@ -133,6 +133,45 @@ markers on non-sequences; tabs/rails that hide evidence ("evidence should
 scroll, not hide" — Kimi); citations inside numeric table cells; internal
 tool names rendered in citations (provenance is for sources, not plumbing).
 
+## 6. External design skill packs (added 2026-08-02)
+
+Third-party Claude-Code skill packs exist for UI/design craft. They are a
+legitimate way to import taste the conductor does not natively have — Emil
+Kowalski's framing, which is honest: *"agents don't have great taste."*
+
+**`emilkowalski/skills`** — MIT, ~23.7k stars, install
+`npx skills@latest add emilkowalski/skills`. Author built Sonner and Vaul;
+worked at Vercel and Linear. Eight skills: `emil-design-eng` (core),
+`review-animations`, `improve-animations`, `find-animation-opportunities`,
+`animation-vocabulary`, `apple-design`, `pick-ui-library`, `prototype`.
+
+Triage **for this vault's work**:
+
+- **`prototype`** (builds multiple UI variations behind a comparison
+  switcher) is the highest-value one here, and it is a structural answer to
+  the **brief-dominance** problem recorded in §3: variations to compare beat
+  one identity to accept, and they do not require sterilizing the brief first.
+- **`animation-vocabulary`** is aimed at the USER, not the conductor — it
+  teaches precise language for *requesting* motion. That closes the real
+  bottleneck (brief specificity), which no amount of conductor-side craft
+  fixes.
+- **`emil-design-eng`**, **`apple-design`** — general craft, useful.
+- The three animation-audit skills apply only when a page actually has motion.
+- **`pick-ui-library` is largely DEAD for claude.ai artifacts** — the strict
+  CSP (§2) blocks external libraries, so Radix/shadcn/etc. cannot load.
+  Useful only for local projects.
+
+**Precedence, non-negotiable.** House `artifact-design` calibrates investment;
+THIS file carries the vault's ethics and constraints; external packs are
+*taste input beneath both*. An external skill never overrides §1
+(presentation ethics — the skin must never flatter the result), §2 (hard
+constraint battery), or §4 (pre-publish battery). Where an external pack
+recommends something §5 rejects, §5 wins.
+
+**Status: NOT INSTALLED as of 2026-08-02.** Installing lands files in a
+skills directory — if project-level, inside the vault and git-tracked, which
+is a change-control item. See `Pending Decisions/010-external-design-skill-packs.md`.
+
 ## When NOT to use this skill
 
 Calibrating how much design INVESTMENT a request deserves is the house
