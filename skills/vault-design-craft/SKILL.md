@@ -46,6 +46,28 @@ obey the same law as its prose:
   feature; render the thinness of an edge "as geometry, not adjectives"
   (Kimi's CI strip straddling zero).
 
+**SCOPE — what this section governs, and what it does not (user ruling,
+2026-08-04).** Everything above binds **evidence artifacts**: bench reports,
+verdict filings, dashboards, backtest exhibits, anything whose job is to let a
+reader judge a result. It does **not** bind a deliberate **persuasion
+artifact** — a pitch page, an application deck, something built
+to advocate. There the job IS to make the case as compellingly as it can
+honestly be made, and hallmark's craft rules become straightforwardly useful.
+
+Two hard limits on that carve-out, or it eats the rule:
+1. **The genre is declared before the work starts, never discovered after the
+   result disappoints.** "This is a persuasion piece" is a brief-time
+   decision. Retrofitting it onto a weak finding is the exact failure §1
+   exists to prevent.
+2. **Persuasion licenses emphasis, framing, and polish — never fabrication.**
+   The honesty floor is unconditional: no invented metrics, testimonials,
+   logos, or case-study counts, in any genre (the one rule imported outright
+   from the external packs — hallmark gate 46). Advocacy selects what to
+   foreground among true things; it does not manufacture them.
+
+A bench report may never wear persuasion clothes; a pitch may never wear
+evidence clothes it has not earned.
+
 ## 2. Hard constraint battery (self-contained pages / claude.ai artifacts)
 
 Violating any of these fails the commission:
@@ -63,6 +85,11 @@ Violating any of these fails the commission:
    argued in the rationale — a choice, never an omission.
 4. Responsive to ~380px; wide tables/charts scroll in their own
    `overflow-x:auto` container; the body never scrolls horizontally.
+   **(Hardened 2026-08-04, imported after the design-pack trial found both
+   absent from our artifacts): root `overflow-x: clip` on BOTH `html` and
+   `body` — never `hidden`, which breaks position:sticky; and
+   `overflow-wrap: anywhere; min-width: 0` on display headings, which is what
+   actually stops a long unbroken token blowing out the layout at 320px.**
 5. `font-variant-numeric: tabular-nums` wherever digits align.
 6. `prefers-reduced-motion` respected; keyboard focus visible.
 
@@ -75,6 +102,20 @@ as law; the full constraint battery (§2); an enumerated content program
 format (DESIGN RATIONALE first — identity, palette hexes, type roles, one
 deliberate risk, what was rejected — then the complete HTML in one block);
 and the current design as context WITH explicit license to reject it.
+
+**Two-builders-one-judge (user-designed 2026-08-04; the answer to the
+self-detection problem).** A model scoring its own output against a checklist
+is the weakest link in every design skill — the mechanical gates (gradient
+present? `transition:all`? banned font?) are genuinely self-checkable, but the
+judgment gates (*is this generic? does it take a position?*) are exactly where
+self-assessment fails, because the scorer is the generator. **The structural
+fix is separation, not a better checklist:** two lanes build independently
+from one sterilized brief, a THIRD lane judges — and a bad verdict is
+answerable, not final. The builders may either revise or argue the verdict
+back, and the conductor adjudicates against §1 and §2. This generalizes the
+blind-designer-panel pattern that produced this file, and it is the same shape
+as the tri-model method: independence first, judgment separated from
+production, the conductor holding the last word.
 
 Cautions from the panel record: **brief-dominance** — loaded vocabulary in
 the brief ("lab report", "evidence-first") steers independent designers to
@@ -132,6 +173,20 @@ cream-serif-terracotta AI-slop template; emoji section markers; numbered
 markers on non-sequences; tabs/rails that hide evidence ("evidence should
 scroll, not hide" — Kimi); citations inside numeric table cells; internal
 tool names rendered in citations (provenance is for sources, not plumbing).
+
+**Added 2026-08-04 (imported from the hallmark gate list after the sandbox
+trial found it in our own shipped artifact):** **coloured left/right
+side-stripe borders on cards.** A recognized LLM-default tell; it was present
+on the `.tier` and `.callout` blocks of the planning page. Also
+rejected: bordered containers nested directly inside bordered containers of
+the same surface colour.
+
+**NOT rejected here, contra the external packs: structural variety per
+brief.** Hallmark's headline rule — two pages for two briefs should not share
+a rhythm — is correct for landing pages and **wrong for this vault's
+evidentiary series.** A grade-D bench report must sit in the SAME skeleton as
+a grade-A so the verdict is the thing that changes. Comparability outranks
+freshness for anything that reads as evidence.
 
 ## 6. External design skill packs (added 2026-08-02)
 
