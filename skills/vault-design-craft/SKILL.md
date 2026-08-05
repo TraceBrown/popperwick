@@ -201,3 +201,27 @@ sampled-fidelity naming)**. Raw review:
 `.openai/2026-07-25-buildbatch-review-sol.md`. If a future panel
 contradicts a rule here, update THIS file with a dated correction — the
 raw panel archives are the evidence trail.
+
+**Sandbox trial (2026-08-04, user-requested "play around with some").** Both
+packs cloned to scratchpad, never installed; hallmark's 57 gates run as a
+manual checklist against a REAL shipped artifact (the 2026-08-01 credit-card
+roadmap). Outcome — the audit mode earns its keep in reference form:
+
+- **1 real defect found:** coloured left side-stripe borders on cards
+  (hallmark gate 5) — an LLM-default tell, present in our own artifact.
+  **Adopted into this file's practice: no coloured side-stripe cards.**
+- **2 borderline:** bordered container inside bordered container (gate 4);
+  pure `#FFFFFF` as a base surface (gate 7).
+- **1 fails-by-letter-but-correct-for-us:** gate 1 bans system-default display
+  fonts — but §2's CSP forbids external font loading, so a system stack is
+  *mandatory* here. **This is the concrete case for reference-only:** an
+  installed skill would argue for a rule our constraints prohibit.
+- **Gate 46 (never fabricate metrics/testimonials/logos) passed clean** and is
+  hereby imported as house practice — it restates §1's presentation ethics in
+  checkable form.
+- **Worth adopting for the constraint battery (§2):** root `overflow-x: clip`
+  (never `hidden`), and `overflow-wrap: anywhere; min-width: 0` on display
+  headings. Both absent from our artifacts today.
+
+Standing posture: **reference-only** (PD-010, both reviewers converged). Read
+the rules, import the good ones here, do not grant standing prompt influence.
