@@ -31,6 +31,30 @@
 #   message, marks itself ended in BOTH records, and every later invocation is
 #   an immediate no-op (no fetch, no GLM, no Telegram, no vault write).
 #
+# CORPUS SEEDING — the dedup set starts from what the VAULT already knows.
+#   2026-08-05 defect: the first clean live run admitted 2 candidates and BOTH
+#   were papers this vault had already reviewed in depth (2605.11423, assessed
+#   in Research Desk/Reviews/PKT-004-review.md; 2605.04004, audited in Journal/
+#   Corpus Primary-Source Audit). 100% stale re-finds. The run counter only
+#   remembered what the CANARY had seen across its own runs — it was blind to
+#   the corpus already on the shelf. For a design whose premise is that an empty
+#   queue is the honest result, a queue of stale re-finds is worse than an empty
+#   one, and two or three of those and nobody opens the message again.
+#   So every run scans the vault ONCE for arXiv-shaped identifiers and splits
+#   the outcome three ways:
+#     not known           -> normal screening
+#     known, same/lower   -> REJECT, reason "already in corpus", counted
+#     known, HIGHER ver   -> ADMIT, labeled "UPDATED VERSION of a paper already
+#                            reviewed — see <file>". Never sold as a fresh find,
+#                            never silently dropped: a revision to a paper we
+#                            assessed is exactly what we DO want to hear about.
+#   Versions are stripped for matching and kept for display (2605.04004v2 must
+#   match a bare vault record of 2605.04004). A BARE vault mention carries no
+#   version evidence, so "higher" can never be established against it — see
+#   corpus_verdict for why that is the honest reading.
+#   The scan FAILS SOFT: a missing root is a note, never an aborted run. The
+#   canary NEVER reads its own output directory back in as corpus.
+#
 # SILENT-SOURCE DETECTION (conductor addition):
 #   Under a design where empty is valid, a broken source is indistinguishable
 #   from an honest empty result (verified hazard: a feed that returns HTTP 200
@@ -92,6 +116,9 @@
 #                           builder verification (no live fetching).
 #   CANARY_FAKE_GLM=<file>  OFFLINE: use the file contents as the GLM screening
 #                           output instead of invoking glm-do.
+#   CANARY_VAULT_DIR=<dir>  root the CORPUS SCAN walks (default: the vault).
+#                           Test-only; it does NOT move the scripts dir, the
+#                           output dir, or the Telegram credential path.
 #
 # Requires only the stdlib and /usr/bin/python3 (3.9.6 on this Mac). No new
 # dependencies. Verified to compile on 3.9.6 and 3.14.6.
@@ -117,6 +144,12 @@ CONF_FILE = os.environ.get("CANARY_CONF", os.path.join(SCRIPTS, "domain-canary.c
 LOG_FILE = os.environ.get("CANARY_LOG", os.path.join(SCRIPTS, "domain-canary.log"))
 OUT_DIR = os.environ.get(
     "CANARY_OUT_DIR", os.path.join(VAULT, "Research Desk", "domain-canary"))
+# Root the corpus scan walks. Separate from VAULT on purpose: a test may point
+# the SCAN at a fixture tree without moving the scripts dir, the output dir or
+# the Telegram credential path.
+CORPUS_VAULT = os.environ.get("CANARY_VAULT_DIR", VAULT)
+CANARY_DIRNAME = "domain-canary"   # never scanned: the canary is not its own corpus
+CORPUS_FILE_BYTES = 400000         # per-file read cap for the scan
 
 STATE_NAME = "canary-state.json"
 RUNLOG_NAME = "canary-runs.log"        # append-only; second half of the counter
@@ -155,6 +188,9 @@ DEFAULTS = {
     "max_items": 40,
     "seen_cap": 800,
     "telegram_topic": "ondemand",
+    # Vault-relative dirs scanned for already-known arXiv ids (comma list).
+    "corpus_roots": "Journal, Research Desk, Strategy Article Reviews, Sources",
+    "corpus_max_files": 4000,
 }
 
 MIN_CLAIM_CHARS = 40
@@ -660,9 +696,109 @@ def parse_glm(text):
 
 
 # --------------------------------------------------------------------------- #
+# corpus seeding — what the vault already knows (see the file header)
+# --------------------------------------------------------------------------- #
+# The conductor-specified shape: 4 digits, a dot, 4-5 digits, an optional vN.
+_ARXIV_ID_RE = re.compile(r"\b(\d{4}\.\d{4,5})(?:v(\d+))?\b")
+
+
+def arxiv_id_from_url(url):
+    """-> (bare_id, version) for an arXiv URL, else ("", 0). The version is
+    stripped for MATCHING and kept for DISPLAY."""
+    m = _ARXIV_ID_RE.search(url or "")
+    if not m:
+        return "", 0
+    return m.group(1), (int(m.group(2)) if m.group(2) else 0)
+
+
+def scan_corpus(settings):
+    """Walk the configured vault roots once and index every arXiv-shaped id.
+
+    -> (index, notes) where index maps bare_id -> {"version": highest version
+    explicitly written anywhere in the vault (0 = only bare mentions),
+    "files": up to 4 vault-relative paths that mention it}.
+
+    FAILS SOFT by contract: a missing root, an unreadable file, or a blown file
+    cap produces a note and the run continues. A corpus scan must never be able
+    to abort a canary run — the worst case is the old behaviour (no seeding)."""
+    roots = [r.strip() for r in (settings.get("corpus_roots") or "").split(",")
+             if r.strip()]
+    index = {}
+    notes = []
+    if not roots:
+        return index, ["corpus scan disabled (no corpus_roots configured)"]
+    scanned = 0
+    for rel in roots:
+        root = os.path.join(CORPUS_VAULT, rel)
+        if not os.path.isdir(root):
+            notes.append("corpus root missing: %s" % rel)      # soft, not fatal
+            continue
+        try:
+            walker = os.walk(root)
+            for dirpath, dirnames, filenames in walker:
+                # Never read the canary back into its own corpus: its queue
+                # files list the ids it surfaced (admitted AND rejected), so
+                # scanning them would permanently blacklist anything it ever saw.
+                dirnames[:] = [d for d in dirnames
+                               if d != CANARY_DIRNAME and not d.startswith(".")]
+                for fn in filenames:
+                    if not fn.endswith(".md"):
+                        continue
+                    if scanned >= settings["corpus_max_files"]:
+                        notes.append("corpus scan capped at %d files"
+                                     % settings["corpus_max_files"])
+                        return index, notes
+                    scanned += 1
+                    path = os.path.join(dirpath, fn)
+                    try:
+                        with open(path, "r", encoding="utf-8",
+                                  errors="replace") as f:
+                            text = f.read(CORPUS_FILE_BYTES)
+                    except Exception:
+                        continue                                # soft
+                    for m in _ARXIV_ID_RE.finditer(text):
+                        bare = m.group(1)
+                        ver = int(m.group(2)) if m.group(2) else 0
+                        e = index.setdefault(bare, {"version": 0, "files": []})
+                        if ver > e["version"]:
+                            e["version"] = ver
+                        try:
+                            rp = os.path.relpath(path, CORPUS_VAULT)
+                        except Exception:
+                            rp = fn
+                        if rp not in e["files"] and len(e["files"]) < 4:
+                            e["files"].append(rp)
+        except Exception as exc:
+            notes.append("corpus root unreadable: %s (%s)"
+                         % (rel, type(exc).__name__))           # soft
+    return index, notes
+
+
+def corpus_verdict(bare, version, corpus):
+    """-> ("new"|"already"|"updated", where). Pure; the whole policy is here.
+
+    "updated" requires the vault to record an EXPLICIT version lower than the
+    fetched one. A bare vault mention (version 0) is not evidence that the vault
+    holds an older revision — it is evidence that the paper was reviewed, at
+    whatever version was current then. Treating bare as v0 would re-announce
+    every already-reviewed paper as an exciting UPDATED VERSION, which is the
+    stale-re-find failure this whole mechanism exists to stop."""
+    if not bare or not corpus:
+        return "new", ""
+    e = corpus.get(bare)
+    if not e:
+        return "new", ""
+    where = ", ".join(e.get("files") or []) or "the vault"
+    known = int(e.get("version", 0) or 0)
+    if known > 0 and version > known:
+        return "updated", where
+    return "already", where
+
+
+# --------------------------------------------------------------------------- #
 # admission — the bar. Pure and offline-testable.
 # --------------------------------------------------------------------------- #
-def validate_candidate(cand, by_url, seen_urls, admitted_urls):
+def validate_candidate(cand, by_url, seen_urls, admitted_urls, corpus=None):
     """-> (record, None) if it clears the bar, else (None, reason).
 
     AUTH-008 #3: every admitted item carries the exact claim, the primary
@@ -677,6 +813,14 @@ def validate_candidate(cand, by_url, seen_urls, admitted_urls):
     url = (cand.get("url") or "").strip()
     if not url or url not in by_url:
         return None, "url not in source"
+    # Corpus check BEFORE the run-level duplicate check: "the vault already
+    # reviewed this" is the more informative reason of the two.
+    bare, ver = arxiv_id_from_url(url)
+    verdict, where = corpus_verdict(bare, ver, corpus)
+    if verdict == "already":
+        return None, "already in corpus"
+    corpus_note = ("UPDATED VERSION of a paper already reviewed — see %s" % where
+                   if verdict == "updated" else "")
     if url in seen_urls or url in admitted_urls:
         return None, "duplicate"
     item = by_url[url]
@@ -727,11 +871,13 @@ def validate_candidate(cand, by_url, seen_urls, admitted_urls):
         "implication": implication,
         "title": item["title"],
         "source": item.get("source", ""),
+        "arxiv_id": (bare + ("v%d" % ver if ver else "")) if bare else "",
+        "corpus_note": corpus_note,
         "verification": UNVERIFIED,
     }, None
 
 
-def screen(cands, glm_rejects, by_url, seen_urls, max_admitted):
+def screen(cands, glm_rejects, by_url, seen_urls, max_admitted, corpus=None):
     """-> (admitted, reason_counts). Every rejection is counted with a reason."""
     admitted = []
     reasons = {}
@@ -744,7 +890,7 @@ def screen(cands, glm_rejects, by_url, seen_urls, max_admitted):
         if len(admitted) >= max_admitted:
             bump("over cap")
             continue
-        rec, why = validate_candidate(c, by_url, seen_urls, admitted_urls)
+        rec, why = validate_candidate(c, by_url, seen_urls, admitted_urls, corpus)
         if rec is None:
             bump(why)
             continue
@@ -992,7 +1138,7 @@ def reasons_phrase(reasons):
 # messages
 # --------------------------------------------------------------------------- #
 def build_message(run_no, limit, admitted, reasons, screened, seen, results,
-                  flags, outfile, notes):
+                  flags, outfile, notes, corpus_n=0):
     """The Telegram body. Emptiness is stated LOUDLY on the first line — an
     empty queue is the expected weekly result, never a silent skip."""
     n_rej = sum(reasons.values())
@@ -1005,8 +1151,8 @@ def build_message(run_no, limit, admitted, reasons, screened, seen, results,
         head += ""
     head += ". Sources: %s." % sources_phrase(results)
     lines = [head]
-    lines.append("Screened %d item(s) this run; %d already seen in earlier runs."
-                 % (screened, seen))
+    lines.append("Screened %d item(s) this run; %d already seen in earlier runs; "
+                 "corpus: %d ids known." % (screened, seen, corpus_n))
     for f in flags:
         lines.append(f)
     for n in notes:
@@ -1017,6 +1163,8 @@ def build_message(run_no, limit, admitted, reasons, screened, seen, results,
                      "source before it counts as anything):")
         for i, a in enumerate(admitted, 1):
             lines.append("%d. %s" % (i, a["claim"]))
+            if a.get("corpus_note"):
+                lines.append("   %s" % a["corpus_note"])
             lines.append("   %s · %s · %s / %s · friction: %s"
                          % (a["venue"], a["date"], a["instrument"],
                             a["timeframe"], a["friction"]))
@@ -1106,7 +1254,8 @@ def send_telegram(text, settings, dry_run):
 # queue file
 # --------------------------------------------------------------------------- #
 def build_queue_markdown(run_no, limit, admitted, reasons, results, items,
-                         seen, flags, glm_note, glm_raw, notes):
+                         seen, flags, glm_note, glm_raw, notes, corpus_n=0,
+                         corpus_roots=""):
     L = []
     A = L.append
     A("# Domain canary — run %d of %d — %s"
@@ -1124,6 +1273,9 @@ def build_queue_markdown(run_no, limit, admitted, reasons, results, items,
     A("- Fetched %d · already seen %d · screened %d · admitted %d · rejected %d"
       % (len(items) + seen, seen, len(items), len(admitted),
          sum(reasons.values())))
+    A("- Corpus: **%d ids known** to the vault (roots: %s) — anything already "
+      "reviewed here is rejected as `already in corpus`, not re-announced"
+      % (corpus_n, corpus_roots or "none"))
     if glm_note:
         A("- Screening: %s" % glm_note)
     for f in flags:
@@ -1139,6 +1291,9 @@ def build_queue_markdown(run_no, limit, admitted, reasons, results, items,
     for i, a in enumerate(admitted, 1):
         A("### C%d — %s" % (i, oneline(a["claim"], 110)))
         A("")
+        if a.get("corpus_note"):
+            A("> **%s**" % a["corpus_note"])
+            A("")
         A("- **Exact claim:** %s" % a["claim"])
         A("- **Primary source:** %s" % a["url"])
         A("- **Venue / date:** %s / %s" % (a["venue"], a["date"]))
@@ -1232,6 +1387,12 @@ def do_run(settings, sources, conf_notes, dry_run):
         except Exception:
             pass
 
+    # ---- corpus seeding: what the VAULT already knows (once per run) -------
+    corpus, corpus_notes = scan_corpus(settings)
+    notes.extend(corpus_notes)
+    log("corpus: %d ids known%s"
+        % (len(corpus), (" | " + "; ".join(corpus_notes)) if corpus_notes else ""))
+
     # ---- dedupe against everything screened in earlier runs ----------------
     seen_urls = set(st.get("seen_urls") or [])
     items = []
@@ -1267,7 +1428,7 @@ def do_run(settings, sources, conf_notes, dry_run):
         glm_note = "no items to screen — GLM not called"
 
     admitted, reasons = screen(cands, glm_rejects, by_url, seen_urls,
-                               settings["max_admitted"])
+                               settings["max_admitted"], corpus)
 
     # ---- silent-source detection ------------------------------------------
     flags = update_source_state(st, results, settings)
@@ -1281,7 +1442,8 @@ def do_run(settings, sources, conf_notes, dry_run):
         outfile = os.path.join(OUT_DIR, fname)
         md = build_queue_markdown(run_no, pv["limit"], admitted, reasons,
                                   results, items, seen_hits, flags, glm_note,
-                                  glm_raw, notes)
+                                  glm_raw, notes, len(corpus),
+                                  settings.get("corpus_roots", ""))
         with open(outfile, "w", encoding="utf-8") as f:
             f.write(md)
         log("queue file %s (%d bytes)" % (fname, len(md)))
@@ -1292,11 +1454,12 @@ def do_run(settings, sources, conf_notes, dry_run):
 
     # ---- Telegram ----------------------------------------------------------
     msg = build_message(run_no, pv["limit"], admitted, reasons, len(items),
-                        seen_hits, results, flags, outfile, notes)
+                        seen_hits, results, flags, outfile, notes, len(corpus))
     status = send_telegram(msg, settings, dry_run)
-    log("run %d/%d admitted=%d rejected=%d screened=%d seen=%d telegram=%s"
+    log("run %d/%d admitted=%d rejected=%d screened=%d seen=%d corpus=%d "
+        "telegram=%s"
         % (run_no, pv["limit"], len(admitted), sum(reasons.values()),
-           len(items), seen_hits, status))
+           len(items), seen_hits, len(corpus), status))
 
     # ---- state -------------------------------------------------------------
     if not dry_run:
@@ -1337,7 +1500,11 @@ def do_run(settings, sources, conf_notes, dry_run):
 def print_state(settings, sources):
     st = read_state()
     pv = probation_view(st, settings)
+    corpus, corpus_notes = scan_corpus(settings)     # read-only
     out = {
+        "corpus_ids_known": len(corpus),
+        "corpus_roots": settings.get("corpus_roots", ""),
+        "corpus_notes": corpus_notes,
         "out_dir": OUT_DIR,
         "conf": CONF_FILE,
         "probation": pv,
@@ -1697,6 +1864,135 @@ def _selftest():
     expect("unfetchable source -> 'fetch-failed'", miss["status"] == "fetch-failed")
     del os.environ["CANARY_FIXTURE_DIR"]
 
+    # ---- 5b. corpus seeding from a FIXTURE vault tree (no vault mutation) --
+    global CORPUS_VAULT
+    _real_vault = CORPUS_VAULT
+    vdir = tempfile.mkdtemp(prefix="domain-canary-vault.")
+    os.makedirs(os.path.join(vdir, "Journal"))
+    os.makedirs(os.path.join(vdir, "Research Desk", "Reviews"))
+    os.makedirs(os.path.join(vdir, "Research Desk", CANARY_DIRNAME))
+    with open(os.path.join(vdir, "Research Desk", "Reviews", "PKT-004.md"), "w") as f:
+        f.write("L2 (Mesfin, arXiv 2605.11423): 2.0 points round-trip, T = 1.46\n")
+    with open(os.path.join(vdir, "Journal", "audit.md"), "w") as f:
+        f.write("2605.04004 carries a source-side defect.\n"
+                "Also 2508.06788v4 was checked (and 2508.06788v1 before it).\n")
+    # the canary's own queue file must NOT be read back in as corpus
+    with open(os.path.join(vdir, "Research Desk", CANARY_DIRNAME,
+                           "2026-08-05-run-01.md"), "w") as f:
+        f.write("REJECT: http://arxiv.org/abs/2999.55555v1 | out of scope\n")
+    CORPUS_VAULT = vdir
+    try:
+        cs = dict(settings)
+        cs["corpus_roots"] = "Journal, Research Desk, Strategy Article Reviews"
+        corpus, cnotes = scan_corpus(cs)
+        expect("corpus: scans the vault and indexes bare ids",
+               set(corpus) == set(["2605.11423", "2605.04004", "2508.06788"]))
+        expect("corpus: a MISSING root degrades soft (note, run continues)",
+               any("corpus root missing: Strategy Article Reviews" in n
+                   for n in cnotes) and len(corpus) == 3)
+        expect("corpus: the canary never reads its own output back in as corpus",
+               "2999.55555" not in corpus)
+        # NB: .get() everywhere below — an assertion must FAIL, never CRASH the
+        # suite (a crash exits before the remaining checks run and hides them).
+        expect("corpus: the highest explicit version in the vault is recorded",
+               corpus.get("2508.06788", {}).get("version") == 4
+               and corpus.get("2605.04004", {}).get("version") == 0)
+        expect("corpus: the mentioning file is recorded for the report",
+               any("PKT-004.md" in p
+                   for p in corpus.get("2605.11423", {}).get("files", [])))
+        _idx0, _nts0 = scan_corpus(dict(cs, corpus_roots=""))
+        expect("corpus: an empty root list disables the scan honestly",
+               _idx0 == {} and any("disabled" in n for n in _nts0))
+
+        expect("corpus: version parsed off an arXiv URL, kept for display",
+               arxiv_id_from_url("http://arxiv.org/abs/2605.04004v2")
+               == ("2605.04004", 2))
+        expect("corpus: a bare arXiv URL parses with version 0",
+               arxiv_id_from_url("http://arxiv.org/abs/2605.04004")
+               == ("2605.04004", 0))
+        expect("corpus: a non-arXiv URL yields no id",
+               arxiv_id_from_url("https://www.cftc.gov/PressRoom/x-9100-26")
+               == ("", 0))
+        # the three-way verdict
+        expect("corpus verdict: exact bare-id match -> already",
+               corpus_verdict("2605.11423", 0, corpus)[0] == "already")
+        expect("corpus verdict: fetched v2 vs a BARE vault record -> already "
+               "(this is the 2026-08-05 defect case)",
+               corpus_verdict("2605.04004", 2, corpus)[0] == "already")
+        expect("corpus verdict: fetched v5 vs an explicit vault v4 -> updated",
+               corpus_verdict("2508.06788", 5, corpus)[0] == "updated")
+        expect("corpus verdict: fetched v4 vs vault v4 -> already (not higher)",
+               corpus_verdict("2508.06788", 4, corpus)[0] == "already")
+        expect("corpus verdict: an unknown id is unaffected",
+               corpus_verdict("2699.00001", 1, corpus)[0] == "new")
+        expect("corpus verdict: no corpus at all -> everything is new",
+               corpus_verdict("2605.11423", 0, {})[0] == "new"
+               and corpus_verdict("2605.11423", 0, None)[0] == "new")
+        expect("corpus verdict: names the file so the reader can go look",
+               "PKT-004.md" in corpus_verdict("2605.11423", 0, corpus)[1])
+
+        # end-to-end through the admission bar
+        cu = {"http://arxiv.org/abs/2605.04004v2": {
+                  "title": "A paper the vault already audited", "date": "2026-07-01",
+                  "venue": "arXiv", "text": "", "url": "", "source": "arxiv"},
+              "http://arxiv.org/abs/2508.06788v5": {
+                  "title": "A revised paper", "date": "2026-07-02",
+                  "venue": "arXiv", "text": "", "url": "", "source": "arxiv"},
+              "http://arxiv.org/abs/2699.00009v1": {
+                  "title": "Something genuinely new", "date": "2026-07-03",
+                  "venue": "arXiv", "text": "", "url": "", "source": "arxiv"}}
+        base = {"claim": "Round-trip execution cost in ES futures is 0.6 ticks at "
+                         "five-minute horizons on this sample.",
+                "instrument": "ES futures", "timeframe": "five-minute horizons",
+                "friction": "0.6 ticks round trip",
+                "implication": "A five-minute ES edge under 0.6 ticks should fail "
+                               "out of sample on later data."}
+        c_old = dict(base, url="http://arxiv.org/abs/2605.04004v2")
+        c_upd = dict(base, url="http://arxiv.org/abs/2508.06788v5")
+        c_new = dict(base, url="http://arxiv.org/abs/2699.00009v1")
+        expect("admission: an already-reviewed paper is REJECTED "
+               "'already in corpus'",
+               validate_candidate(c_old, cu, set(), set(), corpus)[1]
+               == "already in corpus")
+        rec_u = validate_candidate(c_upd, cu, set(), set(), corpus)[0]
+        expect("admission: a HIGHER version is ADMITTED, labeled UPDATED VERSION",
+               rec_u is not None
+               and rec_u["corpus_note"].startswith("UPDATED VERSION of a paper "
+                                                   "already reviewed — see ")
+               and "audit.md" in rec_u["corpus_note"])
+        expect("admission: the updated entry keeps the version for display",
+               rec_u is not None and rec_u["arxiv_id"] == "2508.06788v5")
+        rec_n = validate_candidate(c_new, cu, set(), set(), corpus)[0]
+        expect("admission: an unknown id is unaffected and carries no note",
+               rec_n is not None and rec_n["corpus_note"] == "")
+        adm_c, rea_c = screen([c_old, c_upd, c_new], [], cu, set(), 3, corpus)
+        expect("screen: corpus rejections are counted in the tally by reason",
+               len(adm_c) == 2 and rea_c.get("already in corpus") == 1)
+        expect("screen: with NO corpus the same three all pass the bar",
+               len(screen([c_old, c_upd, c_new], [], cu, set(), 3, {})[0]) == 3)
+        msg_c = build_message(1, 8, adm_c, rea_c, 3, 0,
+                              [{"name": "arxiv", "status": "ok", "items": [0] * 3,
+                                "http": "200", "note": ""}], [], "", [],
+                              len(corpus))
+        expect("message: carries 'corpus: N ids known'",
+               "corpus: 3 ids known." in msg_c)
+        expect("message: an updated re-find is never sold as a fresh find",
+               "UPDATED VERSION of a paper already reviewed — see " in msg_c)
+        md_c = build_queue_markdown(1, 8, adm_c, rea_c,
+                                    [{"name": "arxiv", "status": "ok",
+                                      "items": [0] * 3, "http": "200", "note": ""}],
+                                    [], 0, [], "", "", [], len(corpus),
+                                    cs["corpus_roots"])
+        expect("queue file: header carries the corpus count and the roots",
+               "**3 ids known**" in md_c and "Strategy Article Reviews" in md_c)
+        expect("queue file: the updated entry is flagged in the entry itself",
+               "> **UPDATED VERSION of a paper already reviewed" in md_c)
+    except Exception as exc:
+        expect("corpus-seeding block ran without crashing (%s)"
+               % type(exc).__name__, False)
+    finally:
+        CORPUS_VAULT = _real_vault
+
     # ---- 6. the admission bar, incl. adversarial candidates ---------------
     items = arx["items"] + cft["items"]
     for it in items:
@@ -2037,10 +2333,18 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    # Fail-open at the outermost layer too: this watcher may never wedge, and a
-    # non-zero exit from a launchd job is noise nobody reads. Log and exit 0.
+    _argv = sys.argv[1:]
+    # --selftest is DELIBERATELY outside the fail-open wrapper. The wrapper
+    # exists so a scheduled RUN can never wedge; applied to the test path it
+    # turns a CRASHED test suite into exit 0, which reads as a pass. (Found
+    # 2026-08-05 while mutation-testing the corpus seeding: two mutants crashed
+    # the suite mid-way and still exited 0.) Tests must fail loudly.
+    if "--selftest" in _argv:
+        sys.exit(main(_argv))
+    # Fail-open at the outermost layer for real runs: this watcher may never
+    # wedge, and a non-zero exit from a launchd job is noise nobody reads.
     try:
-        sys.exit(main(sys.argv[1:]))
+        sys.exit(main(_argv))
     except SystemExit:
         raise
     except Exception as _exc:
