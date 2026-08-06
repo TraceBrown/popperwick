@@ -34,13 +34,21 @@
 # SILENT-SOURCE DETECTION (conductor addition):
 #   Under a design where empty is valid, a broken source is indistinguishable
 #   from an honest empty result (verified hazard: a feed that returns HTTP 200
-#   with zero items). So per-source state distinguishes three outcomes —
+#   with zero items). So per-source state distinguishes FOUR outcomes —
 #     ok           fetched fine, N items parsed
-#     empty        fetched fine, ZERO items parsed  -> counts toward suspicion
-#     fetch-failed curl error / non-200 / empty body / unparseable body
-#   3 consecutive "empty" runs raise SOURCE SUSPECT in the Telegram message and
-#   set suspect=true in the state file. Fetch failures are reported separately,
-#   every run, and never masquerade as an honest empty result.
+#     empty        fetched fine, ZERO items parsed   -> zero_runs++, SUSPECT at 3
+#     rate-limited 429, or 503/any non-2xx carrying Retry-After -> rate_runs++,
+#                  THROTTLED at 3. NEVER touches fail_runs: a healthy source
+#                  that is merely throttled must never be declared failing.
+#     fetch-failed genuine transport failure — curl connect/DNS/TLS/timeout with
+#                  NO HTTP status, a non-200 that is not a rate-limit signal, an
+#                  empty body, or an unparseable body -> fail_runs++, FAILING at 3
+#   CLASSIFY ON THE HTTP STATUS WHENEVER ONE WAS RECEIVED (2026-08-05 defect: a
+#   live 429 surfaced as curl exit 28 and was misreported as FETCH-FAILED). curl
+#   exit 28 is a TIMEOUT, and a rate-limit answer arriving slowly can present as
+#   either an exit 28 or an HTTP 429 depending on timing, so a received status
+#   always wins over the exit code. Exit 28 with NO status is a real transport
+#   failure. The status actually seen is captured and reported either way.
 #
 # DESIGN CONVENTIONS (house rules, `.claude/skills/watcher-ops/SKILL.md`):
 #   * Fail-open EVERYWHERE. Any stage that fails writes an honest note, logs,
@@ -51,6 +59,9 @@
 #     301s http->https and curl WITHOUT -L silently returns zero results); the
 #     arXiv query is passed with --get --data-urlencode (hand-encoding the
 #     quotes and parens is what broke the first attempt).
+#   * POLITENESS: fetch_spacing seconds between SOURCES (default 3 — arXiv asks
+#     for roughly 3 seconds between requests). One request per source per week,
+#     so this is the only pacing that exists; there is no per-item fetching.
 #   * Everything entering GLM is byte-capped; GLM output is treated as
 #     UNTRUSTED DATA and is never executed, never trusted for a URL, a date or
 #     a venue (those are taken from our own parse, so GLM cannot invent them).
@@ -123,6 +134,12 @@ ALLOWED_ENDPOINTS = frozenset([
 ])
 ALLOWED_TYPES = ("arxiv", "rss", "gmail")
 
+# HTTP statuses that mean "you are being throttled", not "this source is
+# broken". 429 is rate limiting by definition; 503 is the status arXiv and many
+# public APIs return when shedding load. A Retry-After header on ANY non-2xx
+# response is treated as an explicit rate-limit signal too.
+RATE_LIMIT_CODES = ("429", "503")
+
 DEFAULTS = {
     "probation_runs": 8,
     "max_admitted": 3,
@@ -131,7 +148,7 @@ DEFAULTS = {
     "rss_max_items": 25,
     "max_age_days": 120,
     "fetch_timeout": 60,
-    "fetch_spacing": 2,
+    "fetch_spacing": 3,     # seconds BETWEEN SOURCES (arXiv asks for ~3s)
     "glm_timeout": 300,
     "max_glm_bytes": 60000,
     "per_item_chars": 1400,
@@ -287,14 +304,15 @@ def source_status_gate(src):
 # --------------------------------------------------------------------------- #
 # fetch
 # --------------------------------------------------------------------------- #
-def curl_argv(src, settings, body_path):
+def curl_argv(src, settings, body_path, header_path):
     """The exact curl argv for a source. -sSL (the -L matters: arXiv answers
     http with a 301 and curl without -L silently returns zero results), a UA, a
-    --max-time, body to a file, HTTP code on stdout. arXiv query parameters ride
-    as --get --data-urlencode so curl does the encoding of the quotes/parens."""
+    --max-time, body to a file, response headers to a file (-D, so Retry-After
+    can be read), HTTP code on stdout. arXiv query parameters ride as --get
+    --data-urlencode so curl does the encoding of the quotes/parens."""
     argv = ["curl", "-sSL", "-A", USER_AGENT,
             "--max-time", str(settings["fetch_timeout"]),
-            "-o", body_path, "-w", "%{http_code}"]
+            "-o", body_path, "-D", header_path, "-w", "%{http_code}"]
     if src["type"] == "arxiv":
         argv += ["--get",
                  "--data-urlencode", "search_query=" + src["extra"],
@@ -305,8 +323,28 @@ def curl_argv(src, settings, body_path):
     return argv
 
 
+_RETRY_AFTER_RE = re.compile(r"(?im)^\s*retry-after\s*:\s*(.+?)\s*$")
+
+
+def _retry_after(header_path):
+    """The Retry-After value from a curl -D header dump, or "". With -L the dump
+    holds every response in the chain, so the LAST one wins (the final response
+    is the one whose status we classify on)."""
+    try:
+        with open(header_path, "r", encoding="utf-8", errors="replace") as f:
+            hits = _RETRY_AFTER_RE.findall(f.read())
+    except Exception:
+        return ""
+    return oneline(hits[-1], 40) if hits else ""
+
+
 def fetch_body(src, settings, workdir):
-    """-> (body_text, http_code, note). Fail-open: never raises."""
+    """-> (body_text, http_code, note, retry_after). Fail-open: never raises.
+
+    http_code is whatever curl actually saw — "000" when no response arrived at
+    all. That distinction is load-bearing: a received status classifies the
+    result even when curl also reports a non-zero exit (a slow 429 shows up as
+    exit 28 WITH status 429), while exit 28 with no status is a real timeout."""
     fixture = os.environ.get("CANARY_FIXTURE_DIR", "")
     if fixture:
         base = os.path.join(fixture, src["name"])
@@ -316,26 +354,35 @@ def fetch_body(src, settings, workdir):
                 code = f.read().strip() or "200"
         except Exception:
             pass
+        retry = ""
+        try:
+            with open(base + ".retry", "r", encoding="utf-8") as f:
+                retry = f.read().strip()
+        except Exception:
+            pass
         try:
             with open(base + ".body", "r", encoding="utf-8", errors="replace") as f:
-                return f.read(), code, "fixture"
+                return f.read(), code, "fixture", retry
         except Exception:
-            return "", "000", "fixture missing"
+            return "", "000", "fixture missing", retry
     body_path = os.path.join(workdir, src["name"] + ".body")
-    argv = curl_argv(src, settings, body_path)
+    head_path = os.path.join(workdir, src["name"] + ".head")
+    argv = curl_argv(src, settings, body_path, head_path)
     try:
         p = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            timeout=settings["fetch_timeout"] + 30)
     except Exception as exc:
-        return "", "000", "curl failed (%s)" % type(exc).__name__
+        return "", "000", "curl failed (%s)" % type(exc).__name__, ""
     code = (p.stdout or b"").decode("utf-8", "replace").strip() or "000"
+    retry = _retry_after(head_path)
     if p.returncode != 0:
-        return "", code, "curl exit %d" % p.returncode
+        # Body is unusable, but the STATUS (if any) still classifies the result.
+        return "", code, "curl exit %d" % p.returncode, retry
     try:
         with open(body_path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(), code, ""
+            return f.read(), code, "", retry
     except Exception:
-        return "", code, "body unreadable"
+        return "", code, "body unreadable", retry
 
 
 # --------------------------------------------------------------------------- #
@@ -412,19 +459,46 @@ def parse_rss(xml_text, settings, venue):
     return items
 
 
+def is_rate_limited(code, retry_after):
+    """THROTTLED, not BROKEN. True when the server answered with an explicit
+    rate-limit signal: a 429/503 status, or a Retry-After header on any non-2xx
+    response. Pure and offline-testable — pulled out of collect_source so the
+    three-way classification can be asserted directly."""
+    code = (code or "").strip()
+    if code in RATE_LIMIT_CODES:
+        return True
+    if retry_after and code and not code.startswith("2") and code not in ("000", "0"):
+        return True
+    return False
+
+
 def collect_source(src, settings, workdir):
-    """One source -> result dict. Distinguishes ok / empty / fetch-failed."""
+    """One source -> result dict. Distinguishes ok / empty / rate-limited /
+    fetch-failed (see the SILENT-SOURCE DETECTION block in the file header)."""
     res = {"name": src["name"], "type": src["type"], "status": "", "http": "",
-           "items": [], "note": ""}
+           "items": [], "note": "", "retry_after": ""}
     gate = source_status_gate(src)
     if gate is not None:
         res["status"] = gate
         return res
-    body, code, note = fetch_body(src, settings, workdir)
+    body, code, note, retry = fetch_body(src, settings, workdir)
     res["http"] = code
+    res["retry_after"] = retry
+    # (1) RATE LIMITING FIRST, and it wins over the curl exit code. A received
+    # HTTP status means DNS, TLS and the connection are all healthy, so this is
+    # never a transport failure — no matter what curl exited with. This ordering
+    # IS the 2026-08-05 fix: a live 429 arrived as curl exit 28 and the old code
+    # reported "arxiv FETCH-FAILED(curl exit 28)" for a perfectly sound endpoint.
+    if is_rate_limited(code, retry):
+        res["status"] = "rate-limited"
+        res["note"] = "http %s%s" % (code,
+                                     (", Retry-After: " + retry) if retry else "")
+        return res
+    # (2) transport failure: curl could not complete the exchange. Exit 28 with
+    # no status lands here, correctly — that is a genuine timeout.
     if note and note != "fixture":
         res["status"] = "fetch-failed"
-        res["note"] = note
+        res["note"] = note + ((", http " + code) if code not in ("000", "0", "") else "")
         return res
     if code not in ("200", "0", ""):
         res["status"] = "fetch-failed"
@@ -814,25 +888,42 @@ def update_source_state(st, results, settings):
         s = st["sources"].get(r["name"], {})
         zero = int(s.get("zero_runs", 0) or 0)
         fail = int(s.get("fail_runs", 0) or 0)
+        rate = int(s.get("rate_runs", 0) or 0)
         if r["status"] == "ok":
-            zero, fail = 0, 0
+            zero, fail, rate = 0, 0, 0
         elif r["status"] == "empty":
             zero += 1
+            fail, rate = 0, 0
+        elif r["status"] == "rate-limited":
+            # NEVER touches fail_runs. A throttled source is a healthy source;
+            # declaring it failing is the defect this branch exists to prevent.
+            # fail_runs resets because a 429 proves the transport works. zero_runs
+            # is left alone: a throttled run teaches us nothing about yield.
+            rate += 1
             fail = 0
         elif r["status"] == "fetch-failed":
             fail += 1
-        # disabled / not-active sources touch neither counter.
+            rate = 0
+        # disabled / not-active sources touch no counter.
         suspect = (r["status"] == "empty" and zero >= settings["zero_yield_suspect"])
         failing = (r["status"] == "fetch-failed" and fail >= settings["zero_yield_suspect"])
+        # Throttling is not failure, but a source that has delivered nothing for
+        # three straight runs still has to be said out loud — otherwise a
+        # permanently-429 endpoint becomes the silent breakage this whole
+        # detector exists to catch. Distinct wording, distinct counter.
+        throttled = (r["status"] == "rate-limited" and rate >= settings["zero_yield_suspect"])
         st["sources"][r["name"]] = {
             "last_status": r["status"],
             "last_items": len(r["items"]),
             "last_http": r["http"],
             "last_note": r["note"],
+            "last_retry_after": r.get("retry_after", ""),
             "zero_runs": zero,
             "fail_runs": fail,
+            "rate_runs": rate,
             "suspect": bool(suspect),
             "failing": bool(failing),
+            "throttled": bool(throttled),
             "updated": stamp(),
         }
         if suspect:
@@ -843,6 +934,11 @@ def update_source_state(st, results, settings):
             flags.append(
                 "SOURCE FAILING: %s could not be fetched for %d runs (%s) — "
                 "verify the endpoint" % (r["name"], fail, r["note"] or "no detail"))
+        if throttled:
+            flags.append(
+                "SOURCE THROTTLED: %s has been rate-limited for %d consecutive "
+                "runs (%s) — not a failure, but check the request budget"
+                % (r["name"], rate, r["note"] or "no detail"))
     return flags
 
 
@@ -854,6 +950,11 @@ def sources_phrase(results):
             bits.append("%s ok(%d)" % (r["name"], len(r["items"])))
         elif r["status"] == "empty":
             bits.append("%s empty(0)" % r["name"])
+        elif r["status"] == "rate-limited":
+            # Reads as "throttled, nothing is wrong with the endpoint" — the
+            # wording matters because this is the line the user actually sees.
+            bits.append("%s rate-limited(%s, retry next run)"
+                        % (r["name"], r["http"] or "?"))
         elif r["status"] == "fetch-failed":
             bits.append("%s FETCH-FAILED(%s)" % (r["name"], r["note"] or r["http"] or "?"))
         else:
@@ -863,10 +964,16 @@ def sources_phrase(results):
 
 def empty_line(results):
     """The closing line when nothing was admitted. An empty queue is the
-    expected weekly result — but a run where every source failed to fetch is
+    expected weekly result — but a run where no source delivered any data is
     NOT an empty week, and must never be dressed up as one."""
-    live = [r for r in results if r["status"] in ("ok", "empty", "fetch-failed")]
-    if live and all(r["status"] == "fetch-failed" for r in live):
+    live = [r for r in results
+            if r["status"] in ("ok", "empty", "rate-limited", "fetch-failed")]
+    mute = [r for r in live if r["status"] in ("rate-limited", "fetch-failed")]
+    if live and len(mute) == len(live):
+        if all(r["status"] == "rate-limited" for r in mute):
+            return ("EVERY SOURCE WAS RATE-LIMITED this run — no data was "
+                    "fetched. Not an empty week and not a breakage; it should "
+                    "clear by the next run.")
         return ("NO SOURCE COULD BE FETCHED this run — that is a FAILURE, not "
                 "an empty week. Verify the endpoints.")
     return ("Nothing survived the bar. An empty queue is the expected result, "
@@ -1341,14 +1448,29 @@ def _selftest():
     # ---- 3. curl argv (https, -L, --get --data-urlencode) ------------------
     argv = curl_argv({"type": "arxiv", "url": "https://export.arxiv.org/api/query",
                       "extra": 'cat:q-fin.TR AND (abs:"slippage")', "name": "arxiv"},
-                     settings, "/tmp/body")
+                     settings, "/tmp/body", "/tmp/hdr")
     expect("curl argv: -sSL present (the -L is what survives the arXiv 301)",
            "-sSL" in argv)
+    expect("curl argv: -D dumps response headers (needed for Retry-After)",
+           "-D" in argv and argv[argv.index("-D") + 1] == "/tmp/hdr")
     expect("curl argv: --get present", "--get" in argv)
     expect("curl argv: query rides as its own --data-urlencode argv element",
            'search_query=cat:q-fin.TR AND (abs:"slippage")' in argv)
     expect("curl argv: url is https and last", argv[-1].startswith("https://"))
     expect("curl argv: max-time set", "--max-time" in argv)
+
+    # ---- 3b. rate-limit signal detection (pure) ---------------------------
+    expect("rate-limit: 429 is throttling", is_rate_limited("429", ""))
+    expect("rate-limit: 503 is throttling", is_rate_limited("503", ""))
+    expect("rate-limit: Retry-After on any non-2xx is an explicit signal",
+           is_rate_limited("500", "30") and is_rate_limited("418", "5"))
+    expect("rate-limit: a plain 500 with no Retry-After is NOT throttling",
+           not is_rate_limited("500", ""))
+    expect("rate-limit: NO status received is never throttling (real timeout)",
+           not is_rate_limited("000", "") and not is_rate_limited("000", "30")
+           and not is_rate_limited("", ""))
+    expect("rate-limit: a 2xx is never throttling",
+           not is_rate_limited("200", "30"))
 
     # ---- 4. live 301 + encoding proof against a LOOPBACK server (no net) ---
     try:
@@ -1357,21 +1479,49 @@ def _selftest():
         import urllib.parse as _up
         seen_paths = []
 
+        EMPTY_ATOM = ('<?xml version="1.0"?><feed '
+                      'xmlns="http://www.w3.org/2005/Atom"></feed>')
+
         class H(http.server.BaseHTTPRequestHandler):
+            def _send(self, code, body, headers=()):
+                raw = body.encode("utf-8")
+                self.send_response(code)
+                for k, v in headers:
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
             def do_GET(self):
                 seen_paths.append(self.path)
-                if self.path.startswith("/redirect"):
+                p = self.path.split("?", 1)[0]
+                if p == "/redirect":
                     self.send_response(301)
                     self.send_header("Location", "/api/query?" +
                                      self.path.split("?", 1)[1])
                     self.end_headers()
                     return
-                body = ATOM_FIXTURE.encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/atom+xml")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
+                if p == "/429":                       # bare rate limit
+                    return self._send(429, "Too Many Requests")
+                if p == "/429ra":                     # rate limit + Retry-After
+                    return self._send(429, "Too Many Requests",
+                                      [("Retry-After", "120")])
+                if p == "/503":                       # shedding load
+                    return self._send(503, "Service Unavailable")
+                if p == "/503ra":
+                    return self._send(503, "Service Unavailable",
+                                      [("Retry-After", "30")])
+                if p == "/404":                       # a real non-200 failure
+                    return self._send(404, "Not Found")
+                if p == "/418ra":       # non-2xx + Retry-After on an odd status
+                    return self._send(418, "teapot", [("Retry-After", "5")])
+                if p == "/empty":                     # 200 with zero entries
+                    return self._send(200, EMPTY_ATOM,
+                                      [("Content-Type", "application/atom+xml")])
+                if p == "/junk":                      # 200 with garbage
+                    return self._send(200, "<html>not a feed</html")
+                self._send(200, ATOM_FIXTURE,
+                           [("Content-Type", "application/atom+xml")])
 
             def log_message(self, *a):
                 pass
@@ -1383,7 +1533,7 @@ def _selftest():
         src = {"type": "arxiv", "url": base + "/redirect", "name": "arxiv",
                "extra": 'cat:q-fin.TR AND (abs:"transaction cost" OR abs:"slippage")',
                "enabled": True}
-        body, code, note = fetch_body(src, settings, tmpd)
+        body, code, note, retry = fetch_body(src, settings, tmpd)
         expect("loopback: -L followed the 301 and returned the body",
                code == "200" and "<feed" in body)
         qs = _up.parse_qs(_up.urlparse(seen_paths[0]).query)
@@ -1402,9 +1552,107 @@ def _selftest():
         got = open(nol, "r", encoding="utf-8", errors="replace").read()
         expect("loopback: WITHOUT -L the 301 yields an empty body (the trap)",
                "<feed" not in got)
+
+        # ---- 4b. THREE-WAY classification, against real HTTP responses ------
+        # The endpoint allow-list correctly refuses loopback URLs, so the gate
+        # is stubbed out for this block only (it is asserted in part 1).
+        global source_status_gate
+        _real_gate = source_status_gate
+        source_status_gate = lambda s: None
+        try:
+            def probe(path, name="probe"):
+                return collect_source({"enabled": True, "type": "arxiv",
+                                       "name": name, "url": base + path,
+                                       "extra": "q"}, settings, tmpd)
+            r_ok, r_empty, r_junk = probe("/api/query"), probe("/empty"), probe("/junk")
+            r429, r429ra = probe("/429"), probe("/429ra")
+            r503, r503ra = probe("/503"), probe("/503ra")
+            r404, r418 = probe("/404"), probe("/418ra")
+            # a port with nothing listening -> curl cannot connect at all
+            import socket
+            _s = socket.socket()
+            _s.bind(("127.0.0.1", 0))
+            dead_port = _s.getsockname()[1]
+            _s.close()
+            rdead = collect_source({"enabled": True, "type": "arxiv",
+                                    "name": "probe", "extra": "q",
+                                    "url": "http://127.0.0.1:%d/api/query" % dead_port},
+                                   settings, tmpd)
+
+            expect("classify: 200 with entries -> ok",
+                   r_ok["status"] == "ok" and len(r_ok["items"]) == 2)
+            expect("classify: 200 with ZERO entries -> empty",
+                   r_empty["status"] == "empty" and r_empty["http"] == "200")
+            expect("classify: 200 with an unparseable body -> fetch-failed",
+                   r_junk["status"] == "fetch-failed")
+            expect("classify: HTTP 429 -> rate-limited, NOT fetch-failed",
+                   r429["status"] == "rate-limited" and r429["http"] == "429")
+            expect("classify: 429 + Retry-After -> rate-limited, header captured",
+                   r429ra["status"] == "rate-limited"
+                   and r429ra["retry_after"] == "120"
+                   and "Retry-After: 120" in r429ra["note"])
+            expect("classify: HTTP 503 -> rate-limited",
+                   r503["status"] == "rate-limited" and r503["http"] == "503")
+            expect("classify: 503 + Retry-After -> rate-limited, header captured",
+                   r503ra["status"] == "rate-limited"
+                   and r503ra["retry_after"] == "30")
+            expect("classify: Retry-After on an unrelated non-2xx -> rate-limited",
+                   r418["status"] == "rate-limited" and r418["http"] == "418")
+            expect("classify: a plain 404 -> fetch-failed with the code",
+                   r404["status"] == "fetch-failed" and r404["note"] == "http 404")
+            expect("classify: connection refused (no status) -> fetch-failed",
+                   rdead["status"] == "fetch-failed" and rdead["http"] in ("000", "0"))
+            expect("classify: the HTTP status is captured and reported either way",
+                   r429["http"] == "429" and r404["http"] == "404")
+
+            # the exact Telegram wording for a throttled source
+            expect("telegram wording: rate-limited reads as throttled, not broken",
+                   sources_phrase([r429]) == "probe rate-limited(429, retry next run)")
+            expect("telegram wording: a genuine failure still reads FETCH-FAILED",
+                   sources_phrase([r404]) == "probe FETCH-FAILED(http 404)")
+
+            # ---- counters: 3x429 must NOT trip FAILING; 3x transport must ---
+            st_rl = blank_state()
+            fl = []
+            for _ in range(3):
+                fl = update_source_state(st_rl, [r429ra], settings)
+            s_rl = st_rl["sources"]["probe"]
+            expect("counters: 3 consecutive 429s do NOT increment fail_runs",
+                   s_rl["fail_runs"] == 0 and s_rl["rate_runs"] == 3)
+            expect("counters: 3 consecutive 429s do NOT raise SOURCE FAILING",
+                   s_rl["failing"] is False
+                   and not any(f.startswith("SOURCE FAILING") for f in fl))
+            expect("counters: 3 consecutive 429s DO raise SOURCE THROTTLED",
+                   s_rl["throttled"] is True
+                   and any(f.startswith("SOURCE THROTTLED: probe has been "
+                                        "rate-limited for 3 consecutive runs")
+                           for f in fl))
+            st_tf = blank_state()
+            fl2 = []
+            for _ in range(3):
+                fl2 = update_source_state(st_tf, [r404], settings)
+            s_tf = st_tf["sources"]["probe"]
+            expect("counters: 3 consecutive transport failures DO raise "
+                   "SOURCE FAILING",
+                   s_tf["fail_runs"] == 3 and s_tf["failing"] is True
+                   and any(f.startswith("SOURCE FAILING") for f in fl2))
+            st_mix = blank_state()
+            update_source_state(st_mix, [r404], settings)
+            update_source_state(st_mix, [r404], settings)
+            fl3 = update_source_state(st_mix, [r429], settings)
+            expect("counters: a 429 proves the transport works and resets "
+                   "fail_runs (2 failures + a throttle never trips FAILING)",
+                   st_mix["sources"]["probe"]["fail_runs"] == 0
+                   and not any(f.startswith("SOURCE FAILING") for f in fl3))
+            expect("message: an all-rate-limited run is not called a failure",
+                   "EVERY SOURCE WAS RATE-LIMITED" in build_message(
+                       2, 8, [], {}, 0, 0, [r429], [], "", []))
+        finally:
+            source_status_gate = _real_gate
         srv.shutdown()
     except Exception as exc:
-        expect("loopback 301/encoding test ran (%s)" % type(exc).__name__, False)
+        expect("loopback 301/encoding/classification tests ran (%s)"
+               % type(exc).__name__, False)
 
     # ---- 5. parsers + fetched/empty/failed distinction ---------------------
     fixdir = tempfile.mkdtemp(prefix="domain-canary-fix.")
