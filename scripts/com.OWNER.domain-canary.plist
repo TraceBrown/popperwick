@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  com.OWNER.domain-canary — the bounded domain-intake canary (AUTH-008).
+
+  Runs  ~/Claude/.claude/scripts/domain_canary.py  once a WEEK (Sunday 08:00
+  local). One fetch of two primary sources, one GLM screening pass, one
+  candidate-claim queue file, one Telegram message. An empty queue is the
+  expected weekly result and is still reported.
+
+  *** NOT LOADED, AND NOT IN ~/Library/LaunchAgents. ***
+  This file is written to .claude/scripts/ deliberately: the builder that wrote
+  it has no authority to create launchd state. The conductor installs it after
+  reviewing the code and a live canary run:
+
+    cp ~/Claude/.claude/scripts/com.OWNER.domain-canary.plist \
+       ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.OWNER.domain-canary.plist
+    launchctl list | grep domain-canary        # confirm loaded
+
+  Reload after editing (launchd only re-reads the plist on load):
+    launchctl unload ~/Library/LaunchAgents/com.OWNER.domain-canary.plist
+    launchctl load   ~/Library/LaunchAgents/com.OWNER.domain-canary.plist
+
+  UNLOADING IS NOT REQUIRED TO STOP IT. The automatic stop lives in the script:
+  after 8 runs it posts one PROBATION ENDED message and every later firing is an
+  immediate no-op (no fetch, no GLM spend, no Telegram, no vault write). Leaving
+  this job loaded past the stop costs nothing. Unload it whenever convenient.
+
+  SCHEDULE NOTE: StartCalendarInterval does not fire while the Mac is asleep;
+  launchd runs the missed job once on wake. That is acceptable here — the canary
+  is weekly and time-insensitive — and it is exactly why dated obligations live
+  on the phone calendar instead (CLAUDE.md, 2026-08-05).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.OWNER.domain-canary</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/OWNER/Claude/.claude/scripts/domain_canary.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- launchd does not load a shell profile; glm-do lives in ~/.local/bin. -->
+        <key>PATH</key>
+        <string>/Users/OWNER/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <!-- WEEKLY, quiet hour: Sunday (Weekday 0) 08:00 local. Collides with
+         nothing — the idle-research tooling grid is weekdays 09:30 + hourly
+         10:00-21:00, and another weekly job takes Sunday 09:00. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>0</integer>
+        <key>Hour</key><integer>8</integer>
+        <key>Minute</key><integer>0</integer>
+    </dict>
+
+    <!-- Never run on load: a load must not silently burn a probation run. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <!-- Low-priority background work. -->
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <!-- launchd captures stray trace lines here. The structured run log is
+         domain-canary.log (written by the script), and the tamper-evident run
+         counter is Research Desk/domain-canary/canary-runs.log. -->
+    <key>StandardOutPath</key>
+    <string>/Users/OWNER/Claude/.claude/scripts/domain-canary.launchd.out</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/OWNER/Claude/.claude/scripts/domain-canary.launchd.err</string>
+</dict>
+</plist>
