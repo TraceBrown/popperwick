@@ -33,6 +33,10 @@ MANIFEST="$STATE_DIR/fence-lock.manifest"
 # --- THE CANONICAL SET ------------------------------------------------------
 # Keep aligned with FENCED_TOKENS in .claude/hooks/overnight_fence.py. A file
 # listed here that does not exist is skipped silently (globs may be empty).
+# Symlinks are rejected: `chflags` DOES follow a link and protect its target
+# (verified 2026-08-09, contra Sol's review), but `ls -lO` reads the LINK, so a
+# symlinked entry reports unlocked and corrupts `status` and post-verification.
+# There are none in the set today; rejecting keeps it that way honestly.
 canonical_paths() {
   local p
   for p in \
@@ -48,84 +52,149 @@ canonical_paths() {
     "$VAULT/.claude/hooks/"*.py \
     "$VAULT/.claude/scripts/fence.sh" \
   ; do
-    [ -f "$p" ] && printf '%s\n' "$p"
+    [ -f "$p" ] && [ ! -L "$p" ] && printf '%s\n' "$p"
   done
 }
 
-locked_flag() { ls -lO "$1" 2>/dev/null | grep -q uchg && echo yes || echo no; }
+locked_flag() { ls -lO "$1" 2>/dev/null | awk '{print $5}' | grep -q uchg \
+  && echo yes || echo no; }
+
+# Single-operator tool, but arm/disarm racing each other would corrupt the
+# manifest. mkdir is atomic on every filesystem we care about (Sol).
+acquire_lock() {
+  mkdir -p "$STATE_DIR" || return 1
+  if ! mkdir "$STATE_DIR/.lock" 2>/dev/null; then
+    echo "ANOTHER fence.sh IS RUNNING (or crashed). If you are sure it is not," >&2
+    echo "  rmdir '$STATE_DIR/.lock'  then retry." >&2
+    return 1
+  fi
+  trap 'rmdir "$STATE_DIR/.lock" 2>/dev/null' EXIT
+}
 
 cmd_arm() {
   if [ -e "$SENTINEL" ]; then
     echo "ALREADY ARMED (sentinel exists). Run 'fence.sh status'." >&2
     return 1
   fi
-  mkdir -p "$STATE_DIR" "$(dirname "$SENTINEL")" || return 1
+  acquire_lock || return 1
+  mkdir -p "$(dirname "$SENTINEL")" || return 1
 
-  # Lock first, sentinel last: if locking fails we have not announced an armed
-  # fence that isn't actually enforcing. Record each success immediately, so a
-  # partial run still leaves an exact, unlockable manifest.
-  : > "$MANIFEST"
-  local n=0 f
+  # TRANSACTIONAL ORDER (Sol 2026-08-09): publish the INTENDED manifest FIRST,
+  # atomically, then lock. The old order (lock, then append) meant an interrupt
+  # between the two left an immutable file NOT in the manifest — invisible to
+  # disarm. Manifest-first makes it a guaranteed SUPERSET of what is locked, and
+  # `chflags nouchg` on an already-unlocked file is a harmless no-op. So every
+  # interruption now fails toward "disarm can still clear everything".
+  local f n=0 failed=0
+  canonical_paths > "$MANIFEST.tmp" || return 1
+  printf '# vault=%s\n' "$VAULT" >> "$MANIFEST.tmp"
+  mv -f "$MANIFEST.tmp" "$MANIFEST" || return 1
+
   while IFS= read -r f; do
-    if chflags uchg "$f" 2>/dev/null; then
-      printf '%s\n' "$f" >> "$MANIFEST"
+    case "$f" in '#'*) continue ;; esac
+    chflags uchg "$f" 2>/dev/null
+    # POST-VERIFY: chflags can report success without the flag landing. Trust
+    # the observed flag, never the exit code (Sol).
+    if [ "$(locked_flag "$f")" = yes ]; then
       n=$((n + 1))
     else
-      echo "WARN: could not lock $f" >&2
+      echo "WARN: failed to lock $f" >&2
+      failed=$((failed + 1))
     fi
-  done < <(canonical_paths)
+  done < "$MANIFEST"
 
-  touch "$SENTINEL"
+  if [ "$failed" -gt 0 ]; then
+    echo "ABORTING: $failed file(s) did not lock — rolling back, NOT arming." >&2
+    cmd_disarm >/dev/null 2>&1
+    echo "Rolled back. Fence is NOT armed; investigate before retrying." >&2
+    return 1
+  fi
+  if ! touch "$SENTINEL" 2>/dev/null; then
+    echo "ABORTING: locked $n files but could NOT set the sentinel." >&2
+    cmd_disarm >/dev/null 2>&1
+    echo "Rolled back. Fence is NOT armed." >&2
+    return 1
+  fi
   echo "FENCE ARMED — $n canonical files immutable (chflags uchg); sentinel set."
   echo "Manifest: $MANIFEST"
   echo "Disarm with: $VAULT/.claude/scripts/fence.sh disarm"
 }
 
+# Unlock everything still flagged under a root. Ground truth is the FLAG, not
+# the manifest — Sol's decisive finding was that a truncated-but-valid manifest
+# produced zero errors, so disarm deleted it and reported success with 47 of 48
+# files still immutable. Bookkeeping can lie; the filesystem cannot.
+sweep_flagged() {
+  local root="$1" f swept=0
+  while IFS= read -r f; do
+    chflags nouchg "$f" 2>/dev/null && swept=$((swept + 1))
+  done < <(find "$root" -flags +uchg -type f -not -path "*/.git/*" 2>/dev/null)
+  echo "$swept"
+}
+
 cmd_disarm() {
-  local n=0 f miss=0
-  # Sentinel first: tier 1 stops denying immediately, so a failed unlock below
+  local n=0 f mvault=""
+  acquire_lock || return 1
+  # Sentinel first: tier 1 stops denying immediately, so a slow unlock below
   # cannot strand a session that is otherwise fine.
   rm -f "$SENTINEL"
+
   if [ -f "$MANIFEST" ]; then
+    mvault=$(grep '^# vault=' "$MANIFEST" 2>/dev/null | head -1 | cut -d= -f2-)
     while IFS= read -r f; do
-      [ -z "$f" ] && continue
-      if chflags nouchg "$f" 2>/dev/null; then
-        n=$((n + 1))
-      else
-        echo "WARN: could not unlock $f" >&2
-        miss=$((miss + 1))
-      fi
-    done < "$MANIFEST"
-    # If any manifest entry failed to unlock (corrupt/stale lines), fall back
-    # to the flag-based sweep BEFORE discarding the manifest — otherwise
-    # stragglers stay locked until the user happens to run `status` (Kimi).
-    if [ "$miss" -gt 0 ]; then
-      echo "  $miss entr(ies) failed — sweeping by flag as well." >&2
-      while IFS= read -r f; do
-        chflags nouchg "$f" 2>/dev/null && n=$((n + 1))
-      done < <(find "$VAULT" -flags +uchg -type f -not -path "*/.git/*" 2>/dev/null)
-      miss=0
-    fi
-    rm -f "$MANIFEST"
-  else
-    echo "No manifest found — sweeping the vault for stragglers instead." >&2
-    while IFS= read -r f; do
+      case "$f" in ''|'#'*) continue ;; esac
       chflags nouchg "$f" 2>/dev/null && n=$((n + 1))
-    done < <(find "$VAULT" -flags +uchg -type f -not -path "*/.git/*" 2>/dev/null)
+    done < "$MANIFEST"
+  else
+    echo "No manifest — relying on the flag sweep." >&2
   fi
-  echo "FENCE DISARMED — $n files unlocked, sentinel removed."
-  [ "$miss" -gt 0 ] && echo "  ($miss failed — run: $0 recover)" >&2
+
+  # ALWAYS sweep by flag afterwards, whatever the manifest said. This is what
+  # closes the truncated-manifest hole: correctness no longer depends on the
+  # manifest being complete.
+  n=$((n + $(sweep_flagged "$VAULT")))
+  if [ -n "$mvault" ] && [ "$mvault" != "$VAULT" ] && [ -d "$mvault" ]; then
+    echo "NOTE: manifest was written for '$mvault' — sweeping there too." >&2
+    n=$((n + $(sweep_flagged "$mvault")))
+  fi
+
+  # Verify by observation before claiming success.
+  local residue=0
+  while IFS= read -r f; do
+    [ "$(locked_flag "$f")" = yes ] && residue=$((residue + 1))
+  done < <(canonical_paths)
+
+  if [ "$residue" -gt 0 ]; then
+    echo "INCOMPLETE — $residue canonical file(s) STILL immutable." >&2
+    echo "  Manifest kept at $MANIFEST. Run: $0 recover" >&2
+    return 1
+  fi
+  rm -f "$MANIFEST"
+  echo "FENCE DISARMED — $n files unlocked, sentinel removed, 0 residue."
   return 0
 }
 
-# Last-resort: unlock every immutable file in the vault, manifest or not.
+# Last-resort: unlock every immutable file under the vault, manifest or not.
+# Deliberately broad — this is the "I am stuck" button, and availability beats
+# precision here. It names every file it touches so an unrelated immutable file
+# (Sol's over-breadth note) is visible rather than silent.
+# MOVED VAULT: if the manifest points elsewhere, that root is swept too; if the
+# vault has moved and no manifest survives, run with FENCE_VAULT=<new path>.
 cmd_recover() {
-  local n=0 f
-  while IFS= read -r f; do
-    chflags nouchg "$f" 2>/dev/null && { n=$((n + 1)); echo "  unlocked: $f"; }
-  done < <(find "$VAULT" -flags +uchg -type f -not -path "*/.git/*" 2>/dev/null)
+  local n=0 f mvault=""
+  [ -f "$MANIFEST" ] && mvault=$(grep '^# vault=' "$MANIFEST" 2>/dev/null |
+    head -1 | cut -d= -f2-)
+  for root in "$VAULT" "$mvault"; do
+    [ -z "$root" ] || [ ! -d "$root" ] && continue
+    while IFS= read -r f; do
+      chflags nouchg "$f" 2>/dev/null && { n=$((n + 1)); echo "  unlocked: $f"; }
+    done < <(find "$root" -flags +uchg -type f -not -path "*/.git/*" 2>/dev/null)
+  done
   rm -f "$SENTINEL" "$MANIFEST"
   echo "RECOVERED — $n files unlocked, sentinel and manifest cleared."
+  [ "$n" -eq 0 ] && echo "  (nothing was locked under $VAULT — if the vault has" \
+    "moved, retry with FENCE_VAULT=<new path> $0 recover)" >&2
+  return 0
 }
 
 cmd_status() {
