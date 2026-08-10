@@ -180,6 +180,49 @@ with the vault's own authority behind it — and the sessions most likely to be
 misled are the ones doing exactly what they should: loading the skill instead of
 re-reading the whole record.
 
+## Recipe 7 — Spec-derived regression tests (adopted 2026-08-09, Wave-5; doctrine proven in the Wave-1 fence repair)
+
+**Regression cases derive from the grammar of the input, never from the
+implementation's own patterns — and they must exercise the production
+entrypoint.** Kimi ranked this above independent code review because it
+removes the correlated error at its source: a test written by copying the
+implementation's regexes inherits the implementation's blind spots and can
+only ever confirm them.
+
+**The evidence (2026-08-08/09 fence incident):** the overnight fence shipped
+with a 22/22-green battery that compared *copied regexes* against test
+strings and never invoked the hook. Meanwhile the live hook ALLOWED
+`bash -c "rm CLAUDE.md"` — quote-stripping hid the wrapped verb, and the
+wrapper re-scan covered only the always-deny class. The battery was green
+over a live hole because it tested the pattern, not the program. The rebuilt
+battery (58/58, then 62/62) drives the real `main()` over cases derived from
+the *input grammar* (verbs × wrappers × quoting × substitution shapes), and
+it found what the copied-regex battery structurally could not.
+
+**The procedure, for any guard/validator/parser in this vault:**
+
+1. **Enumerate the input grammar, not the code paths.** What shapes can
+   arrive? (For a command guard: plain verb, quoted, escaped, exec-wrapped,
+   nested wrappers, command substitution, env-stripped, glob forms.) Derive
+   cases from that enumeration — the implementation's own patterns are
+   forbidden as a case source.
+2. **Drive the production entrypoint** — the shipped `main()`, hook, or
+   script, never a copied fragment. If the entrypoint can't be driven
+   in-process or against a scratch tree, that is a finding in itself.
+3. **Assert known-bypass classes at current behavior.** Residual holes that
+   are accepted-by-design get pinned as expected-ALLOW (or expected-DENY)
+   cases, so any drift in either direction announces itself instead of
+   moving silently.
+4. **Breaker, not approver** (Sol's stance, adopted at the 2026-08-08
+   adjudication): the test author's job is to produce a counterexample, and
+   a battery that has never once failed against a deliberately broken
+   implementation is unproven — break the implementation on purpose once
+   (fail-under-broken) and watch the battery catch it before trusting green.
+5. **Never fire destructive cases at live state** — scratch tree
+   (`FENCE_VAULT`-style env override) or in-process invocation returning
+   verdicts without side effects (2026-08-09 incident rule in
+   [[HANDOFF — Adoption Waves (2026-08-09)]]).
+
 ## The golden inventory (verified as of 2026-07-04; **counts audited and corrected 2026-07-28**)
 
 - **Contract math**: MES tick 0.25pt = $1.25 ($5/pt); MNQ tick 0.25pt = $0.50 ($2/pt). CME public specs.
