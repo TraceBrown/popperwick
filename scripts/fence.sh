@@ -105,13 +105,13 @@ cmd_arm() {
 
   if [ "$failed" -gt 0 ]; then
     echo "ABORTING: $failed file(s) did not lock — rolling back, NOT arming." >&2
-    cmd_disarm >/dev/null 2>&1
+    _unlock_core >/dev/null 2>&1
     echo "Rolled back. Fence is NOT armed; investigate before retrying." >&2
     return 1
   fi
   if ! touch "$SENTINEL" 2>/dev/null; then
     echo "ABORTING: locked $n files but could NOT set the sentinel." >&2
-    cmd_disarm >/dev/null 2>&1
+    _unlock_core >/dev/null 2>&1
     echo "Rolled back. Fence is NOT armed." >&2
     return 1
   fi
@@ -132,9 +132,15 @@ sweep_flagged() {
   echo "$swept"
 }
 
-cmd_disarm() {
+# Core unlock logic WITHOUT lock acquisition. Exists because cmd_arm's
+# failure paths must roll back while STILL HOLDING the lock — calling
+# cmd_disarm there deadlocked on the non-reentrant mkdir lock, failed
+# silently behind >/dev/null, and printed "Rolled back" over files that were
+# still immutable (reproduced in a scratch tree, 2026-08-13 Wave-1 audit,
+# reviewer finding; fixed same sitting). Callers: cmd_disarm (with lock),
+# cmd_arm rollback paths (lock already held).
+_unlock_core() {
   local n=0 f mvault=""
-  acquire_lock || return 1
   # Sentinel first: tier 1 stops denying immediately, so a slow unlock below
   # cannot strand a session that is otherwise fine.
   rm -f "$SENTINEL"
@@ -172,6 +178,11 @@ cmd_disarm() {
   rm -f "$MANIFEST"
   echo "FENCE DISARMED — $n files unlocked, sentinel removed, 0 residue."
   return 0
+}
+
+cmd_disarm() {
+  acquire_lock || return 1
+  _unlock_core
 }
 
 # Last-resort: unlock every immutable file under the vault, manifest or not.
