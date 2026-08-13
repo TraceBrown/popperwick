@@ -222,6 +222,14 @@ it found what the copied-regex battery structurally could not.
    (`FENCE_VAULT`-style env override) or in-process invocation returning
    verdicts without side effects (2026-08-09 incident rule in
    [[HANDOFF — Adoption Waves (2026-08-09)]]).
+6. **Read-probe canaries report SUCCESS or the error string — never
+   contents** (2026-08-10 incident: a verbatim-contents probe met an
+   inert deny rule and printed a live auth token into conductor context;
+   the probe design, not just the broken rule, caused the burn). And a
+   deny-rule battery must include a **known-broken-rule case** — e.g., a
+   single-slash `Read(/abs/path)` rule, which parses as cwd-relative and
+   silently allows everything — so an inert cage fails loudly instead of
+   passing green.
 
 ## The golden inventory (verified as of 2026-07-04; **counts audited and corrected 2026-07-28**)
 
