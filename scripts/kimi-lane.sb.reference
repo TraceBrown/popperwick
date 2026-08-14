@@ -10,7 +10,12 @@
 (deny default)
 (allow process-fork process-exec* sysctl-read mach-lookup signal
        system-socket system-info ipc-posix-shm)
-(allow network-outbound)   ;; NOTE: (remote tcp) silently kills ALL egress — verified
+(allow network-outbound (remote ip "*:*"))   ;; IP only — NOT arbitrary unix sockets
+(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))
+;; NOTE: bare (allow network-outbound) also reaches UNIX sockets — which let the lane
+;; talk to the live ssh-agent (verified: ssh-add -l connected). (remote tcp) is a
+;; different trap: it parses and silently kills ALL egress.
+(deny mach-lookup (global-name "com.apple.pasteboard.1"))  ;; pbpaste read the real clipboard
 
 ;; 1. system reads (DNS, TLS, dyld, node runtime)
 (allow file-read* file-read-metadata)
@@ -35,3 +40,14 @@
 (allow file-read* file-write* (subpath "/private/tmp/claude-501") (subpath "/tmp/claude-501")
                               (subpath "/private/var/folders") (subpath "/private/tmp/cc-socks"))
 (deny file-write* (subpath "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad/kimi-corpus"))   ;; corpus stays immutable even inside scratch
+
+;; --- ANCESTOR IMMUTABILITY (Sol finding, 2026-08-13, REPRODUCED) ---
+;; The broad temp-write allowance let the lane RENAME an ancestor directory,
+;; moving the corpus out from under its write-deny prefix. Verified: it moved
+;; the live scratchpad. Deny write ops on the containing directories themselves
+;; (contents stay writable via the subpath allows above).
+(deny file-write* (literal "/private/tmp/claude-501"))
+(deny file-write* (literal "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602"))
+(deny file-write* (literal "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad"))
+(deny file-write* (literal "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad/kimi-corpus"))
+(deny file-write* (literal "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad/kimi-outbox"))
