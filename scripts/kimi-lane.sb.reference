@@ -1,0 +1,33 @@
+;; Kimi lane sandbox — kernel-enforced confinement (Seatbelt)
+;; Built 2026-08-13 (user ruling: "You may build") after the Claude Code
+;; permission layer proved DENY-based — unlisted paths fell open, so
+;; AUTH-012's "outbox only" could not be expressed there. This can express it.
+;;
+;; STRUCTURE (later rules win): allow system broadly so DNS/TLS work, then
+;; DENY the entire home directory, then re-allow ONLY the lane's legitimate
+;; paths. Allow-listing reads outright starves DNS (verified empirically).
+(version 1)
+(deny default)
+(allow process-fork process-exec* sysctl-read mach-lookup signal
+       system-socket system-info ipc-posix-shm)
+(allow network-outbound)   ;; NOTE: (remote tcp) silently kills ALL egress — verified
+
+;; 1. system reads (DNS, TLS, dyld, node runtime)
+(allow file-read* file-read-metadata)
+
+;; 2. THE WALL: nothing in the user's home is readable or writable
+(deny file-read* file-write* (subpath "/Users/OWNER"))
+
+;; 3. re-allow ONLY what the lane needs from home
+(allow file-read* (subpath "/Users/OWNER/.local/share/claude")
+                  (subpath "/Users/OWNER/.local/bin")
+                  (literal "/Users/OWNER/.claude/settings-kimi-lane.json")
+                  (literal "/Users/OWNER/.claude/settings-kimi-lane-msg.json"))
+(allow file-read* file-write* (subpath "/Users/OWNER/.claude/projects"))  ;; audit trail
+
+;; 4. corpus READ-ONLY, outbox READ-WRITE, harness scratch
+(allow file-read* (subpath "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad/kimi-corpus"))
+(allow file-read* file-write* (subpath "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad/kimi-outbox"))
+(allow file-read* file-write* (subpath "/private/tmp/claude-501") (subpath "/tmp/claude-501")
+                              (subpath "/private/var/folders") (subpath "/private/tmp/cc-socks"))
+(deny file-write* (subpath "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad/kimi-corpus"))   ;; corpus stays immutable even inside scratch
