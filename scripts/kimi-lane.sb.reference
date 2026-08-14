@@ -14,6 +14,8 @@
 
 ;; 1. system reads (DNS, TLS, dyld, node runtime)
 (allow file-read* file-read-metadata)
+(allow file-write-data (literal "/dev/null") (literal "/dev/dtracehelper"))
+(allow file-read* (literal "/dev/urandom") (literal "/dev/random"))
 
 ;; 2. THE WALL: nothing in the user's home is readable or writable
 (deny file-read* file-write* (subpath "/Users/OWNER"))
@@ -23,7 +25,9 @@
                   (subpath "/Users/OWNER/.local/bin")
                   (literal "/Users/OWNER/.claude/settings-kimi-lane.json")
                   (literal "/Users/OWNER/.claude/settings-kimi-lane-msg.json"))
-(allow file-read* file-write* (subpath "/Users/OWNER/.claude/projects"))  ;; audit trail
+(allow file-read* file-write* (subpath "/Users/OWNER/.claude/projects/-private-tmp-claude-501--Users-OWNER-Claude-56f0df80-cc9e-4141-920f-58d763e25602-scratchpad-kimi-corpus"))  ;; audit trail — ITS OWN project dir only.
+;; Narrowed 2026-08-13: a write anywhere in ~/.claude/projects lets a lane forge a
+;; TRANSCRIPT, and anything resuming that session inherits the forgery as history.
 
 ;; 4. corpus READ-ONLY, outbox READ-WRITE, harness scratch
 (allow file-read* (subpath "/private/tmp/claude-501/-Users-OWNER-Claude/56f0df80-cc9e-4141-920f-58d763e25602/scratchpad/kimi-corpus"))
