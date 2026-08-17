@@ -66,6 +66,33 @@ Reading anything; web search/fetch; running documented read-only diagnostics (`r
    > ⚠️ **NEVER `git add -A` when the working tree contains user work-in-progress — stage explicit paths (incident 2026-07-28).** During a 67-commit unattended overnight session the conductor used `git add -A` throughout. The user had an uncommitted edit to `USER-SITTING-CHECKLIST.md` (visible in `git status` at session start); at commit 3 of 67 it was swept into a commit about *Takahashi and Mesfin* and pushed. **The user's decisions were committed under an unrelated message without being asked**, and the session's own report asserted the file was "untouched and unstaged" for 90 minutes afterward.
    > **The rule above already covered this** — "inspect anything unexpected" — and was simply not followed, once, and then inherited by 66 later commits. The failure mode is that `-A` makes the omission *silent and repeating*. **Concretely:** if `git status --short` is non-empty for a file you did not create or edit this session, stage explicit paths for the whole session. And if you promise the user a file is untouched, **re-verify that promise before the final report**, not at the moment you made it. Snapshot (as of 2026-07-04, re-derive per the maintenance section — don't trust this line): the repo ran ~2 days behind the changelog; that lag is a known weak point, not a convention.
 
+## Skill authoring & revision protocol (adopted 2026-08-17, anthropics/skills quarry, user-ratified)
+
+Patterns from [[Sources/Anthropics Skills — Source Read (2026-08-17)]]
+(T1-1/T1-4/T1-7), governing how vault skills are written and changed:
+
+- **Descriptions are the triggering mechanism — write them "pushy," with a
+  SKIP clause.** All when-to-load information lives in frontmatter, not the
+  body; counter undertriggering with "even if the user doesn't explicitly
+  say X" phrasing; and state when NOT to fire (negative scope beats a
+  second positive example). The strongest gate format observed: TRIGGER
+  list + SKIP-overrides-triggers clause + a cheap pre-check that avoids
+  loading at all.
+- **Test triggers with near-misses.** When a skill's gating matters (or has
+  misfired), build 8–10 should-trigger and 8–10 should-NOT-trigger queries
+  where the negatives share keywords with the skill but need something
+  else. Obviously-irrelevant negatives test nothing.
+- **Revise against a snapshot.** Git history is the snapshot; commit before
+  the revision pass. For judgment-bearing skill changes, compare old-vs-new
+  on the same inputs contemporaneously rather than trusting that the new
+  version reads better. Validate derived artifacts against their source so
+  inherited defects aren't attributed to the change.
+- **Templates are starting points, not inspiration.** Where a template
+  exists, read it FIRST and state what is FIXED (copy exactly) vs VARIABLE
+  (customize per instance) as two explicit lists. The two-list shape is
+  also the cleanest formulation of this skill's own allowed-vs-sign-off
+  split — when writing a new gate, prefer it.
+
 ## When NOT to use this skill
 
 For *how to run* things (sessions, pipelines, delegation) use `vault-run-and-operate`. For *why the system is shaped this way* use `vault-architecture-contract`. For what counts as evidence, `vault-validation-and-qa`.

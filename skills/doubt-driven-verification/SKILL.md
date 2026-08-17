@@ -53,6 +53,32 @@ MODEL-SWITCHING escalation rubric; Kimi for big-context re-reads). Their
 answer is a draft: adjudicate it against the source like anything else.
 Reviewer intuition never outranks a verified passage (see table, row 4).
 
+## Adopted verification patterns (2026-08-17, anthropics/skills quarry, user-ratified)
+
+Concept-level adoptions, re-expressed for this vault ([[Sources/Anthropics
+Skills — Source Read (2026-08-17)]] T1-2/T1-4; they are patterns, not
+incident-evidenced table rows — the table's own rule stands):
+
+- **State the check's scope.** Every verification records what the green
+  result proves and what it does NOT prove. A matching grep proves the
+  string exists, not that the claim's hedges and scope survived; a clean
+  simulation proves the formula evaluates, not that it's the right formula.
+  Write the "does not prove" half down when it matters.
+- **Know the silent passes.** Some failure modes return clean: a check run
+  against the wrong file, a battery that never contained the claim, an
+  extractor that dropped the qualifier the check wasn't looking for. When a
+  pass surprises you, ask what could have passed silently — and prefer
+  checks with a cheap tell (a count, a locator, a spot value) over bare
+  booleans.
+- **Inherited or introduced?** Before attributing a defect to the source or
+  to an extraction, check the original: an error you introduced looks
+  exactly like one you inherited. Baseline derived artifacts against what
+  they were derived from, so upstream defects don't read as yours (and
+  yours can't hide among them).
+- **Blind the escalation.** When a dispute goes to the cross-model reader,
+  strip model identity and provenance from the two readings — hand over
+  content, not authorship. Judgment first, attribution after.
+
 ## Anti-rationalization table (evidenced entries only)
 
 Scope discipline per the Sol amendment that shaped this file: entries exist
