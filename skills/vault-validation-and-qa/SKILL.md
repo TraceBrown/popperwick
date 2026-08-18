@@ -319,6 +319,35 @@ recipe makes it a named, checkable convention everywhere.
   independence. (Existence/faithfulness checking alone does not catch two
   sources that disagree.)
 
+## Imported craft — anthropics/skills round (2026-08-17, [[Sources/Anthropics Skills — Source Read (2026-08-17)]]; user-ratified; blind-pair-amended per [[.openai/2026-08-17-luna-t1-adoption-review.md]])
+
+- **Every recipe states its scope — what a green check proves and what it
+  does NOT prove.** A matching grep proves the string exists, not that
+  hedges and scope survived; a passing battery proves what the battery
+  contained, not the claim. When a check matters, write the does-not-prove
+  half down and prefer checks with a cheap tell (a count, a locator, a
+  spot value) over bare booleans. Before blaming a source for a defect,
+  confirm it predates the extraction — introduced and inherited errors
+  look identical (concepts re-expressed; proprietary-source provenance
+  noted in the source read).
+- **Fresh-reader testing — ambiguity QA ONLY, never verification** (scope
+  fixed by the 2026-08-17 blind review): before a document of record is
+  promoted, a context-free reader (any model or a human; context-free is
+  the point) answers three fixed questions — *what might be ambiguous or
+  unclear? what knowledge does this assume the reader has? any internal
+  contradictions?* Findings are prompts for the author to fix, NEVER
+  verdicts on truth; no model gains verification authority; GLM-never-
+  verifies (change-control non-negotiable 7) untouched; the conductor
+  adjudicates what to act on.
+- **Seed + environment recording for stochastic steps** (narrowed by the
+  same review — the reviewers killed "disputes settle by re-running the
+  seed"): every simulation, bootstrap, or sampled check records its seed
+  and environment fingerprint (library versions, data snapshot) so the
+  output is re-derivable. A reproduced run settles WHAT was computed,
+  never whether it is RIGHT — correctness always takes independent
+  verification (analytic check, different method, or cross-model per
+  existing doctrine).
+
 ## When NOT to use this skill
 
 Choosing what to research or whether a finding merits a rule → `vault-research-methodology`. The statistical validation of trading rules themselves (backtest hygiene, sample size) → `trading-proof-toolkit`.

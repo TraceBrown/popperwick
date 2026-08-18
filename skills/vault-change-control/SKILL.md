@@ -51,7 +51,7 @@ carve-out (gitignored, localhost-only — see non-negotiable 1).
 4. **Never substitute a different tool than the user named without explicit sign-off on the substitution.** *Incident:* 2026-07-02, an Opus dispatch to install a repo the user hadn't literally named was blocked by the safety classifier; the fix was stopping and getting explicit approval for that specific swap. The classifier was right.
 5. **No TradingView scraping or unofficial API wrappers.** Explicit, enforced ToS violation — real ban risk on the user's actual charting account. Verified against TradingView's own policy pages 2026-07-02. Official webhook alerts are the only legitimate automation path.
 6. **No pirated books/PDFs.** Public-domain, Internet Archive/Open Library lending, Libby, author-hosted copies only. Long-standing project rule.
-7. **GLM never searches and never verifies.** GLM 5.2 (`glm-do`) is a tool-less bulk reader. The conductor does source selection and all citation/claim verification. Delegating verification to a tool-less model is a research-integrity violation, not a shortcut.
+7. **GLM never searches and never verifies.** GLM (`glm-do`; 5.3 since 2026-08-15 — MODEL-SWITCHING.md owns the pin, this rule is version-independent) is a tool-less bulk reader. The conductor does source selection and all citation/claim verification. Delegating verification to a tool-less model is a research-integrity violation, not a shortcut.
 8. **No live-trading automation, no external publishing** — see table above. Both user-confirmed as hard rules 2026-07-04.
 
 ## What does NOT need permission
