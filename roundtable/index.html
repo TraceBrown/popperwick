@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roundtable</title>
+<!--
+  DESIGN NOTE
+  Identity: a quiet paper-grey reading instrument for comparing three model
+  answers side by side — evidence-dense, closer to a lab notebook than a
+  product page.
+  Palette (light): bg #f6f5f2 · surface #ffffff · surface-2 #eceae5 ·
+  border #d8d5cd · text #1d1c1a · muted #6b675f · accent #3c5f86 ·
+  status run #8a6a25 / done #45684c / error #8b423d.
+  Palette (dark): bg #15161a · surface #1c1e23 · surface-2 #23262c ·
+  border #32353c · text #e7e5e1 · muted #97948d · accent #7fa7d8 ·
+  status run #c8a352 / done #85af8b / error #cf8a84.
+  Type roles: system sans for prose; monospace (ui-monospace stack) for CLI
+  header lines, code, timers and the rank matrix, all with tabular-nums.
+  Deliberately rejected: terminal black + neon, gradients, coloured side-stripe
+  cards, emoji, cards nested inside same-surface cards, tabbed evidence
+  (evidence scrolls, it never hides), and any external asset — this file makes
+  no request except same-origin /api calls.
+-->
+<style>
+:root {
+  --bg: #f6f5f2;
+  --surface: #ffffff;
+  --surface-2: #eceae5;
+  --border: #d8d5cd;
+  --text: #1d1c1a;
+  --muted: #6b675f;
+  --accent: #3c5f86;
+  --accent-ink: #ffffff;
+  --run: #8a6a25;
+  --done: #45684c;
+  --error: #8b423d;
+  --radius: 6px;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15161a; --surface: #1c1e23; --surface-2: #23262c; --border: #32353c;
+    --text: #e7e5e1; --muted: #97948d; --accent: #7fa7d8; --accent-ink: #10131a;
+    --run: #c8a352; --done: #85af8b; --error: #cf8a84;
+  }
+}
+/* Explicit choices win over the system preference in BOTH directions. */
+:root[data-theme="light"] {
+  --bg: #f6f5f2; --surface: #ffffff; --surface-2: #eceae5; --border: #d8d5cd;
+  --text: #1d1c1a; --muted: #6b675f; --accent: #3c5f86; --accent-ink: #ffffff;
+  --run: #8a6a25; --done: #45684c; --error: #8b423d;
+}
+:root[data-theme="dark"] {
+  --bg: #15161a; --surface: #1c1e23; --surface-2: #23262c; --border: #32353c;
+  --text: #e7e5e1; --muted: #97948d; --accent: #7fa7d8; --accent-ink: #10131a;
+  --run: #c8a352; --done: #85af8b; --error: #cf8a84;
+}
+
+* { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 var(--sans);
+  -webkit-text-size-adjust: 100%;
+}
+h1, h2, h3, h4 { overflow-wrap: anywhere; min-width: 0; margin: 0; }
+h1 { font-size: 17px; letter-spacing: .01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+h3 { font-size: 14px; }
+p { margin: 0 0 .6em; }
+a { color: var(--accent); }
+
+.wrap { max-width: 1380px; margin: 0 auto; padding: 0 14px 40px; }
+
+.topbar {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border); background: var(--surface);
+  padding: 10px 14px;
+}
+.topbar .sub { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+button, select, textarea, input {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 5px 9px;
+}
+textarea { width: 100%; resize: vertical; background: var(--surface); }
+button { cursor: pointer; transition: background-color .12s ease, border-color .12s ease; }
+button:hover:not(:disabled) { background: var(--surface-2); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+button.mini { padding: 1px 6px; font-size: 11.5px; color: var(--muted); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; margin-left: -1px; font-size: 12px; padding: 4px 8px; }
+.seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+.seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg button[aria-pressed="true"] { background: var(--surface-2); border-color: var(--muted); }
+
+.banner {
+  margin: 10px 0 0; padding: 7px 10px; border-radius: var(--radius);
+  background: var(--surface-2); color: var(--run);
+  font: 600 12.5px/1.4 var(--mono); letter-spacing: .04em;
+}
+
+.panel {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px; margin-top: 14px;
+}
+.panel > h2 { margin-bottom: 8px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.grow { flex: 1 1 220px; min-width: 0; }
+.hint { color: var(--muted); font-size: 12.5px; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+.stack > * + * { margin-top: 8px; }
+
+.seatrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seatrow label.name { min-width: 68px; font-weight: 600; }
+.seatrow .note { color: var(--muted); font-size: 12px; }
+
+details > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+details[open] > summary { margin-bottom: 6px; }
+
+.columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 14px; }
+@media (max-width: 900px) { .columns { grid-template-columns: minmax(0, 1fr); } }
+.col { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; min-width: 0; }
+.col .head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; justify-content: space-between; }
+.col .seatname { font-weight: 600; }
+.cli { font-family: var(--mono); font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; margin: 6px 0; }
+
+.status { font-family: var(--mono); font-size: 11.5px; letter-spacing: .03em; font-variant-numeric: tabular-nums; }
+.status[data-s="queued"] { color: var(--muted); }
+.status[data-s="running"] { color: var(--run); }
+.status[data-s="done"] { color: var(--done); }
+.status[data-s="error"], .status[data-s="timed_out"], .status[data-s="cancelled"] { color: var(--error); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: baseline; }
+.status[data-s="running"] .dot { animation: pulse 1.1s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) {
+  .status[data-s="running"] .dot { animation: none; }
+  button { transition: none; }
+}
+
+.body { max-height: 60vh; overflow: auto; overflow-wrap: anywhere; padding-right: 4px; }
+.body h1, .body h2, .body h3, .body h4 { font-size: 13.5px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 12px 0 4px; }
+.body ul, .body ol { margin: 0 0 .6em; padding-left: 20px; }
+.body li { margin-bottom: 2px; }
+.body blockquote { margin: 0 0 .6em; padding: 2px 0 2px 10px; border-left: 2px solid var(--border); color: var(--muted); }
+.body hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+.body code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 0 3px; border-radius: 3px; }
+.body pre { background: var(--surface-2); padding: 8px 10px; border-radius: var(--radius); overflow-x: auto; margin: 0 0 .6em; }
+.body pre code { background: none; padding: 0; font-size: 12px; }
+.body .stub { color: var(--muted); }
+
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 5px 9px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+td.rank { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.turn { background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px; }
+.turn .head { display: flex; gap: 8px; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+.turn .who { font-weight: 600; }
+
+.drawer { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin-top: 14px; }
+.drawer ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.drawer li { border-bottom: 1px solid var(--border); }
+.drawer li:last-child { border-bottom: 0; }
+.drawer li button { width: 100%; text-align: left; border: 0; background: none; padding: 7px 4px; border-radius: 0; }
+.drawer li button:hover { background: var(--surface-2); }
+.drawer .when { color: var(--muted); font-family: var(--mono); font-size: 11.5px; margin-right: 8px; }
+
+.foot { color: var(--muted); font-size: 12px; margin-top: 22px; padding-top: 10px; border-top: 1px solid var(--border); overflow-wrap: anywhere; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1>Roundtable</h1>
+    <p class="sub">Independent answers, then structured rounds. Synthesis: the conductor — not a model.</p>
+  </div>
+  <div class="topbar-actions">
+    <button id="drawerToggle" aria-expanded="false">Sessions</button>
+    <div class="seg" role="group" aria-label="Colour theme">
+      <button data-theme-set="system" aria-pressed="true">System</button>
+      <button data-theme-set="light" aria-pressed="false">Light</button>
+      <button data-theme-set="dark" aria-pressed="false">Dark</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="fakeBanner" class="banner" hidden>FAKE SEATS — no model was called</div>
+
+  <aside id="drawer" class="drawer" hidden>
+    <div class="row">
+      <h2 class="grow">Prior sessions</h2>
+      <button id="drawerRefresh" class="mini">refresh</button>
+    </div>
+    <ul id="sessionList"></ul>
+    <p id="sessionsEmpty" class="hint" hidden>No sessions yet.</p>
+  </aside>
+
+  <main>
+    <section class="panel">
+      <h2>Ask</h2>
+      <div class="stack">
+        <textarea id="question" rows="3" placeholder="One question. The seats answer it blind, in parallel."></textarea>
+        <details id="contextWrap">
+          <summary>Context (optional — pasted below the question, verbatim)</summary>
+          <textarea id="context" rows="5" placeholder="Source text, prior findings, constraints."></textarea>
+        </details>
+        <div id="seatRows" class="stack"></div>
+        <div class="row">
+          <button id="askBtn" class="primary">Ask</button>
+          <button id="cancelBtn" disabled>Cancel</button>
+          <span id="askTimer" class="status num" data-s="queued" hidden><span class="dot"></span><span id="askTimerText">0.0s</span></span>
+          <span id="askMsg" class="hint"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <h2 class="grow">Disagreements</h2>
+        <button id="disagreeBtn" disabled>Extract disagreements (GLM reader)</button>
+        <span id="disagreeStatus" class="status num" data-s="queued" hidden><span class="dot"></span><span class="txt"></span></span>
+      </div>
+      <p id="disagreeHeader" class="cli" hidden></p>
+      <div id="disagreeBody" class="body"><p class="stub">not run yet</p></div>
+    </section>
+
+    <div id="columns" class="columns"></div>
+
+    <section class="panel">
+      <div class="row">
+        <h2 class="grow">Review round</h2>
+        <button id="reviewBtn" disabled>Run review round (anonymized)</button>
+        <span id="reviewStatus" class="status num" data-s="queued" hidden><span class="dot"></span><span class="txt"></span></span>
+      </div>
+      <p class="hint">Letters were shuffled per reviewer; identities were revealed to you only, never to the models.</p>
+      <div id="reviewMatrix" class="table-wrap"></div>
+      <div id="reviewTexts" class="stack"></div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <h2 class="grow">Argument</h2>
+        <label class="hint" for="argueFirst">first</label>
+        <select id="argueFirst"></select>
+        <label class="hint" for="argueSecond">second</label>
+        <select id="argueSecond"></select>
+        <label class="hint" for="argueRounds">rounds</label>
+        <select id="argueRounds"><option>1</option><option>2</option><option>3</option></select>
+        <button id="argueBtn" disabled>Run argument</button>
+        <span id="argueStatus" class="status num" data-s="queued" hidden><span class="dot"></span><span class="txt"></span></span>
+      </div>
+      <textarea id="arguePrompt" rows="2" placeholder="Topic for the argument. The third seat stays silent."></textarea>
+      <div id="argueThread" class="stack"></div>
+    </section>
+
+    <section class="panel">
+      <div class="row">
+        <h2 class="grow">Conductor notes</h2>
+        <span id="notesSaved" class="hint num"></span>
+        <button id="exportBtn" disabled>Export markdown</button>
+      </div>
+      <textarea id="notes" rows="5" placeholder="Your synthesis. This is the only part of the session that carries judgment."></textarea>
+      <p id="exportPath" class="hint mono"></p>
+    </section>
+  </main>
+
+  <footer class="foot">
+    A roundtable session is a DEBATE RECORD, not a review. It carries no closure authority under the vault's
+    reviewer matrix (AUTHORIZATIONS.md, AUTH-001 item 4); a model's ranking here is not a verdict; only the
+    conductor's written synthesis, filed in the usual archives, is.
+  </footer>
+</div>
+
+<script>
+"use strict";
+/* ---------------------------------------------------------------- helpers */
+const $ = (sel, root) => (root || document).querySelector(sel);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const ID_RE = /^[0-9a-f]{8,64}$/;
+const API_TOKEN = "__ROUNDTABLE_TOKEN__";   // replaced per process when the server serves this file
+
+const S = { config: null, session: null, stream: null, running: new Map(), askStart: 0, seatOrder: [] };
+let notesTimer = 0;
+
+async function api(path, body) {
+  const opts = body === undefined ? { headers: { "X-Roundtable": API_TOKEN } } : {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Roundtable": API_TOKEN }, body: JSON.stringify(body)
+  };
+  const res = await fetch(path, opts);
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+  if (!res.ok) throw new Error((data && data.error) || ("HTTP " + res.status));
+  return data;
+}
+
+/* ------------------------------------------------------- markdown (local) */
+function esc(t) {
+  return String(t == null ? "" : t)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function inlineMd(escaped) {
+  const codes = [];
+  let out = escaped.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return "\u0000C" + (codes.length - 1) + "\u0000"; });
+  /* links render as visible text plus the target in parentheses — never an anchor */
+  out = out.replace(/\[([^\]\n]*)\]\(([^)\s]+)\)/g, (m, label, target) => (label || target) + " (" + target + ")");
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/(^|[^*\w])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  out = out.replace(/\u0000C(\d+)\u0000/g, (m, i) => "<code>" + codes[Number(i)] + "</code>");
+  return out;
+}
+function renderMd(raw) {
+  const lines = String(raw == null ? "" : raw).replace(/\u0000/g, "").replace(/\r\n?/g, "\n").split("\n");
+  const out = []; let para = []; let list = null; let i = 0;
+  const flushPara = () => { if (para.length) { out.push("<p>" + inlineMd(esc(para.join(" "))) + "</p>"); para = []; } };
+  const flushList = () => { if (list) { out.push("</" + list + ">"); list = null; } };
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      flushPara(); flushList(); const buf = []; i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++; out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>"); continue;
+    }
+    if (/^\s*$/.test(line)) { flushPara(); flushList(); i++; continue; }
+    if (/^ {0,3}(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flushPara(); flushList(); out.push("<hr>"); i++; continue; }
+    let m = line.match(/^ {0,3}(#{1,6})\s+(.*)$/);
+    if (m) { flushPara(); flushList(); const lv = m[1].length; out.push("<h" + lv + ">" + inlineMd(esc(m[2].trim())) + "</h" + lv + ">"); i++; continue; }
+    if (/^ {0,3}>/.test(line)) {
+      flushPara(); flushList(); const buf = [];
+      while (i < lines.length && /^ {0,3}>/.test(lines[i])) { buf.push(lines[i].replace(/^ {0,3}>\s?/, "")); i++; }
+      out.push("<blockquote>" + renderMd(buf.join("\n")) + "</blockquote>"); continue;
+    }
+    m = line.match(/^ {0,3}([-*+])\s+(.*)$/);
+    if (m) { flushPara(); if (list !== "ul") { flushList(); out.push("<ul>"); list = "ul"; } out.push("<li>" + inlineMd(esc(m[2])) + "</li>"); i++; continue; }
+    m = line.match(/^ {0,3}\d+[.)]\s+(.*)$/);
+    if (m) { flushPara(); if (list !== "ol") { flushList(); out.push("<ol>"); list = "ol"; } out.push("<li>" + inlineMd(esc(m[1])) + "</li>"); i++; continue; }
+    flushList(); para.push(line.trim()); i++;
+  }
+  flushPara(); flushList();
+  return out.join("\n");
+}
+function paintMd(node, raw, stub) {
+  if (!raw || !String(raw).trim()) { node.innerHTML = ""; node.appendChild(el("p", "stub", stub || "empty")); return; }
+  node.innerHTML = renderMd(raw);
+}
+
+/* ------------------------------------------------------------------ theme */
+function setTheme(mode) {
+  if (mode === "system") { delete document.documentElement.dataset.theme; }
+  else { document.documentElement.dataset.theme = mode; }
+  document.querySelectorAll("[data-theme-set]").forEach(b => {
+    b.setAttribute("aria-pressed", String(b.dataset.themeSet === mode));
+  });
+  try { localStorage.setItem("roundtable-theme", mode); } catch (e) { /* private mode */ }
+}
+document.querySelectorAll("[data-theme-set]").forEach(b => {
+  b.addEventListener("click", () => setTheme(b.dataset.themeSet));
+});
+(function restoreTheme() {
+  let mode = "system";
+  try { mode = localStorage.getItem("roundtable-theme") || "system"; } catch (e) { /* ignore */ }
+  setTheme(["system", "light", "dark"].indexOf(mode) >= 0 ? mode : "system");
+})();
+
+/* ------------------------------------------------------------ seat panels */
+function seatState(seat) {
+  let entry = S.running.get(seat);
+  if (!entry) { entry = {}; S.running.set(seat, entry); }
+  return entry;
+}
+function statusText(status, seconds) {
+  const secs = (seconds == null ? 0 : Number(seconds)).toFixed(1) + "s";
+  if (status === "queued") return "queued";
+  if (status === "running") return "running " + secs;
+  if (status === "done") return "done " + secs;
+  if (status === "timed_out") return "timed out " + secs;
+  if (status === "cancelled") return "cancelled " + secs;
+  return "error " + secs;
+}
+function setStatusNode(node, status, seconds) {
+  node.hidden = false;
+  node.dataset.s = status;
+  const txt = $(".txt", node) || node.lastElementChild;
+  if (txt) txt.textContent = statusText(status, seconds);
+}
+function buildColumns(seats) {
+  const host = $("#columns");
+  host.innerHTML = "";
+  S.seatOrder = seats.map(s => s.seat);
+  seats.forEach(s => {
+    const col = el("div", "col");
+    col.id = "col-" + s.seat;
+    const head = el("div", "head");
+    const name = el("span", "seatname", (S.config && S.config.seats[s.seat] ? S.config.seats[s.seat].label : s.seat) + " · " + s.tier);
+    const status = el("span", "status num");
+    status.dataset.s = "queued";
+    status.appendChild(el("span", "dot"));
+    status.appendChild(el("span", "txt", "queued"));
+    head.appendChild(name); head.appendChild(status);
+    const cli = el("p", "cli", "(no CLI header yet)");
+    const body = el("div", "body");
+    body.appendChild(el("p", "stub", "waiting"));
+    col.appendChild(head); col.appendChild(cli); col.appendChild(body);
+    host.appendChild(col);
+  });
+}
+function paintSeat(seat, data) {
+  const col = $("#col-" + seat);
+  if (!col) return;
+  setStatusNode($(".status", col), data.status || "done", data.elapsed_s);
+  $(".cli", col).textContent = data.header ? data.header : "(no CLI header)";
+  const failed = data.status && data.status !== "done";
+  const note = failed ? (data.stderr_tail || "no output — see the seat log") : "";
+  paintMd($(".body", col), data.text || note, failed ? "failed with no output" : "empty");
+}
+
+/* ------------------------------------------------------------- disagreements */
+function paintDisagreements(data) {
+  const body = $("#disagreeBody");
+  const head = $("#disagreeHeader");
+  if (!data) { paintMd(body, "", "not run yet"); head.hidden = true; return; }
+  setStatusNode($("#disagreeStatus"), data.status || "done", data.elapsed_s);
+  head.hidden = !data.header;
+  head.textContent = data.header || "";
+  paintMd(body, data.text, "reader returned nothing");
+  body.querySelectorAll("li, p").forEach(node => {
+    if (node.classList.contains("stub")) return;
+    const text = node.textContent.trim();
+    if (!text) return;
+    const use = el("button", "mini", "use in argument");
+    use.addEventListener("click", () => {
+      $("#arguePrompt").value = text;
+      $("#arguePrompt").focus();
+      refreshButtons();
+    });
+    node.appendChild(document.createTextNode(" "));
+    node.appendChild(use);
+  });
+}
+
+/* -------------------------------------------------------------- review round */
+function paintReview(session) {
+  const matrix = $("#reviewMatrix");
+  const texts = $("#reviewTexts");
+  matrix.innerHTML = ""; texts.innerHTML = "";
+  const results = (session.review && session.review.results) || {};
+  const reviewers = Object.keys(results);
+  if (!reviewers.length) return;
+  const widest = reviewers.reduce((n, r) => Math.max(n, (results[r].ranking_seats || []).length), 0);
+  const table = el("table");
+  const thead = el("thead"); const hr = el("tr");
+  hr.appendChild(el("th", null, "reviewer"));
+  for (let i = 0; i < widest; i++) hr.appendChild(el("th", null, ["1st", "2nd", "3rd", "4th"][i] || (i + 1) + "th"));
+  thead.appendChild(hr); table.appendChild(thead);
+  const tbody = el("tbody");
+  reviewers.forEach(r => {
+    const tr = el("tr");
+    tr.appendChild(el("td", null, r));
+    const ranks = results[r].ranking_seats;
+    if (!ranks) {
+      const td = el("td", "rank", "ranking not parsed — see raw text");
+      td.colSpan = Math.max(widest, 1);
+      tr.appendChild(td);
+    } else {
+      for (let i = 0; i < widest; i++) tr.appendChild(el("td", "rank", ranks[i] || ""));
+    }
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  matrix.appendChild(table);
+
+  reviewers.forEach(r => {
+    const res = results[r];
+    const box = el("details");
+    const mapping = (session.review.mapping_per_reviewer || {})[r] || {};
+    const key = Object.keys(mapping).sort().map(k => k + "=" + mapping[k]).join("  ");
+    box.appendChild(el("summary", null, r + " — full review · " + statusText(res.status || "done", res.elapsed_s) + " · letters " + key));
+    if (res.header) box.appendChild(el("p", "cli", res.header));
+    const body = el("div", "body");
+    paintMd(body, res.text, "no review text");
+    box.appendChild(body);
+    texts.appendChild(box);
+  });
+}
+
+/* -------------------------------------------------------------------- argue */
+function paintArgue(session) {
+  const host = $("#argueThread");
+  host.innerHTML = "";
+  (session.argue || []).forEach((run, idx) => {
+    const head = el("p", "hint", "Argument " + (idx + 1) + ": " + run.order.join(" then ") + " · " + run.rounds + " round(s) · topic: " + run.prompt);
+    host.appendChild(head);
+    run.turns.forEach(turn => host.appendChild(turnNode(turn)));
+  });
+}
+function turnNode(turn) {
+  const box = el("div", "turn");
+  const head = el("div", "head");
+  head.appendChild(el("span", "who", turn.seat));
+  head.appendChild(el("span", "status num", statusText(turn.status || "done", turn.elapsed_s)));
+  box.appendChild(head);
+  if (turn.header) box.appendChild(el("p", "cli", turn.header));
+  const body = el("div", "body");
+  paintMd(body, turn.text, "no reply text");
+  box.appendChild(body);
+  return box;
+}
+
+/* ------------------------------------------------------------------ timers */
+setInterval(() => {
+  const now = performance.now();
+  S.running.forEach((entry, key) => {
+    if (!entry.node || !entry.start) return;
+    setStatusNode(entry.node, "running", (now - entry.start) / 1000);
+  });
+  if (S.askStart) $("#askTimerText").textContent = ((now - S.askStart) / 1000).toFixed(1) + "s";
+}, 200);
+
+function markRunning(key, node) {
+  node.hidden = false;
+  S.running.set(key, { node: node, start: performance.now() });
+  setStatusNode(node, "running", 0);
+  refreshButtons();
+}
+function clearRunning(key) { S.running.delete(key); refreshButtons(); }
+/* stop a multi-call stage and leave its shared status node on the wall time it took */
+function finish(key, node, status) {
+  const entry = S.running.get(key);
+  const secs = entry ? (performance.now() - entry.start) / 1000 : null;
+  clearRunning(key);
+  if (secs != null) setStatusNode(node, status || "done", secs);
+}
+
+function anyRunning() { return S.running.size > 0; }
+
+function refreshButtons() {
+  const busy = anyRunning();
+  const sess = S.session;
+  const answered = sess ? Object.keys(sess.seats).filter(s => sess.seats[s].stage1 && sess.seats[s].stage1.text) : [];
+  $("#cancelBtn").disabled = !busy || !sess;
+  $("#askBtn").disabled = busy;
+  $("#disagreeBtn").disabled = busy || answered.length < 2;
+  $("#reviewBtn").disabled = busy || answered.length < 2;
+  $("#exportBtn").disabled = !sess;
+  $("#argueBtn").disabled = busy || answered.length < 2 || !$("#arguePrompt").value.trim()
+    || $("#argueFirst").value === $("#argueSecond").value;
+  if (!busy) { $("#askTimer").hidden = true; S.askStart = 0; }
+}
+
+/* ------------------------------------------------------------- seat chooser */
+function buildSeatRows() {
+  const host = $("#seatRows");
+  host.innerHTML = "";
+  Object.keys(S.config.seats).forEach(seat => {
+    const info = S.config.seats[seat];
+    const row = el("div", "seatrow");
+    const box = el("input"); box.type = "checkbox"; box.id = "en-" + seat; box.checked = true;
+    const label = el("label", "name", info.label); label.setAttribute("for", box.id);
+    const sel = el("select"); sel.id = "tier-" + seat;
+    Object.keys(info.tiers).forEach(tier => {
+      const opt = el("option", null, tier);
+      opt.value = tier;
+      if (tier === info.default_tier) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    const note = el("span", "note", "");
+    const syncNote = () => { note.textContent = info.tiers[sel.value].note + " · timeout " + info.tiers[sel.value].timeout_s + "s"; };
+    sel.addEventListener("change", syncNote); syncNote();
+    row.appendChild(box); row.appendChild(label); row.appendChild(sel); row.appendChild(note);
+    host.appendChild(row);
+  });
+}
+function chosenSeats() {
+  const out = {};
+  Object.keys(S.config.seats).forEach(seat => {
+    out[seat] = $("#en-" + seat).checked ? $("#tier-" + seat).value : null;
+  });
+  return out;
+}
+
+/* ----------------------------------------------------------------- session */
+function fillArgueSelects(session) {
+  const answered = Object.keys(session.seats).filter(s => session.seats[s].stage1 && session.seats[s].stage1.text);
+  [["#argueFirst", 0], ["#argueSecond", 1]].forEach(([sel, idx]) => {
+    const node = $(sel);
+    const prev = node.value;
+    node.innerHTML = "";
+    answered.forEach(s => { const o = el("option", null, s); o.value = s; node.appendChild(o); });
+    if (answered.indexOf(prev) >= 0) node.value = prev;
+    else if (answered[idx]) node.value = answered[idx];
+  });
+}
+function paintSession(session) {
+  if (S.session && session.id !== S.session.id) {
+    if (notesTimer) { clearTimeout(notesTimer); notesTimer = 0; }   // a pending notes save must not land on the new session
+    S.running.clear();                                              // the other session's timers must not repaint this one
+    S.askStart = 0;
+  }
+  S.session = session;
+  $("#question").value = session.question;
+  $("#context").value = session.context || "";
+  buildColumns(Object.keys(session.seats).map(s => ({ seat: s, tier: session.seats[s].tier })));
+  Object.keys(session.seats).forEach(s => {
+    if (session.seats[s].stage1) paintSeat(s, session.seats[s].stage1);
+  });
+  /* buildColumns replaced the status nodes: re-point any live stage-1 timer at
+     its new node, or a repaint mid-run would tick a detached element */
+  S.running.forEach((entry, key) => {
+    if (key.indexOf("stage1:") !== 0) return;
+    const col = $("#col-" + key.slice(7));
+    if (col) entry.node = $(".status", col); else S.running.delete(key);
+  });
+  paintDisagreements(session.disagreements);
+  paintReview(session);
+  paintArgue(session);
+  fillArgueSelects(session);
+  $("#notes").value = session.notes || "";
+  $("#exportPath").textContent = session.exported_md_path ? "exported: " + session.exported_md_path : "";
+  refreshButtons();
+}
+async function loadSession(id) {
+  if (!ID_RE.test(id)) return;
+  const session = await api("/api/session/" + id);
+  paintSession(session);
+  openStream(id);
+}
+
+/* ------------------------------------------------------------------ events */
+function openStream(id) {
+  if (S.stream) { S.stream.close(); S.stream = null; }
+  const stream = new EventSource("/api/events?id=" + encodeURIComponent(id));
+  S.stream = stream;
+  stream.onmessage = ev => {
+    let msg = null;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    handleEvent(msg);
+  };
+  stream.onopen = () => {
+    /* the workers started before this subscription existed, and a reconnect may
+       have missed events — the session file is the truth, so refresh on every open */
+    refresh(id);
+  };
+  stream.onerror = () => { /* EventSource retries on its own; state comes from refresh */ };
+}
+async function refresh(id) {
+  try { paintSession(await api("/api/session/" + id)); } catch (e) { /* transient */ }
+}
+function handleEvent(msg) {
+  const sess = S.session;
+  if (!sess) return;
+  if (msg.type === "seat_started") {
+    if (msg.stage === "stage1") {
+      const col = $("#col-" + msg.seat);
+      if (col) markRunning("stage1:" + msg.seat, $(".status", col));
+    } else if (msg.stage === "disagreements") {
+      markRunning("disagreements", $("#disagreeStatus"));
+    } else if (msg.stage === "review") {
+      /* reviewers run in parallel behind ONE shared status node, so the key is
+         shared too — per-seat keys would leak a "review:all" that never clears
+         and would wedge every button behind anyRunning() */
+      if (!S.running.has("review")) markRunning("review", $("#reviewStatus"));
+    } else if (msg.stage === "argue") {
+      markRunning("argue", $("#argueStatus"));
+    }
+    return;
+  }
+  if (msg.type === "seat_done" || msg.type === "seat_error") {
+    if (msg.stage === "stage1") {
+      clearRunning("stage1:" + msg.seat);
+      sess.seats[msg.seat].stage1 = msg;
+      paintSeat(msg.seat, msg);
+      fillArgueSelects(sess);
+    }
+    /* a single reviewer finishing does not end the round — review_done does */
+    refreshButtons();
+    return;
+  }
+  if (msg.type === "disagreements_done") {
+    clearRunning("disagreements");
+    sess.disagreements = msg;
+    paintDisagreements(msg);
+    return;
+  }
+  if (msg.type === "review_done") { finish("review", $("#reviewStatus"), msg.status); refresh(sess.id); return; }
+  if (msg.type === "argue_turn") {
+    const runs = sess.argue || [];
+    const run = runs[runs.length - 1];
+    if (run) { run.turns.push(msg); paintArgue(sess); }
+    return;
+  }
+  if (msg.type === "argue_done") { finish("argue", $("#argueStatus"), msg.status); refresh(sess.id); return; }
+  if (msg.type === "resync") { refresh(sess.id); return; }
+  if (msg.type === "cancelled") {
+    S.running.forEach((entry, key) => setStatusNode(entry.node, "cancelled", (performance.now() - entry.start) / 1000));
+    S.running.clear();
+    refreshButtons();
+    $("#askMsg").textContent = "cancelled — " + msg.killed + " process(es) killed";
+  }
+}
+
+/* ----------------------------------------------------------------- actions */
+$("#askBtn").addEventListener("click", async () => {
+  const question = $("#question").value.trim();
+  if (!question) { $("#askMsg").textContent = "a question is required"; return; }
+  $("#askMsg").textContent = "";
+  $("#askBtn").disabled = true;            // synchronously: a double-click must not open two sessions
+  try {
+    const res = await api("/api/ask", { question: question, context: $("#context").value, seats: chosenSeats() });
+    const session = await api("/api/session/" + res.id);
+    paintSession(session);
+    openStream(res.id);
+    S.askStart = performance.now();
+    $("#askTimer").hidden = false;
+    $("#askTimer").dataset.s = "running";
+    Object.keys(session.seats).forEach(s => {
+      const col = $("#col-" + s);
+      if (col) markRunning("stage1:" + s, $(".status", col));
+    });
+  } catch (err) { $("#askMsg").textContent = String(err.message || err); refreshButtons(); }
+});
+$("#cancelBtn").addEventListener("click", async () => {
+  if (!S.session) return;
+  try { await api("/api/cancel", { id: S.session.id }); } catch (err) { $("#askMsg").textContent = String(err.message || err); }
+});
+$("#disagreeBtn").addEventListener("click", async () => {
+  try { await api("/api/disagreements", { id: S.session.id }); markRunning("disagreements", $("#disagreeStatus")); }
+  catch (err) { $("#askMsg").textContent = String(err.message || err); }
+});
+$("#reviewBtn").addEventListener("click", async () => {
+  const seats = Object.keys(S.session.seats).filter(s => S.session.seats[s].stage1 && S.session.seats[s].stage1.text);
+  try { await api("/api/review", { id: S.session.id, seats: seats }); markRunning("review", $("#reviewStatus")); }
+  catch (err) { $("#askMsg").textContent = String(err.message || err); }
+});
+$("#argueBtn").addEventListener("click", async () => {
+  const body = {
+    id: S.session.id,
+    order: [$("#argueFirst").value, $("#argueSecond").value],
+    rounds: Number($("#argueRounds").value),
+    prompt: $("#arguePrompt").value.trim()
+  };
+  try {
+    await api("/api/argue", body);
+    S.session.argue = (S.session.argue || []).concat([{ order: body.order, rounds: body.rounds, prompt: body.prompt, turns: [] }]);
+    paintArgue(S.session);
+    markRunning("argue", $("#argueStatus"));
+  } catch (err) { $("#askMsg").textContent = String(err.message || err); }
+});
+$("#arguePrompt").addEventListener("input", refreshButtons);
+$("#argueFirst").addEventListener("change", refreshButtons);
+$("#argueSecond").addEventListener("change", refreshButtons);
+
+$("#notes").addEventListener("input", () => {
+  if (!S.session) return;
+  clearTimeout(notesTimer);
+  notesTimer = setTimeout(async () => {
+    try {
+      await api("/api/notes", { id: S.session.id, notes: $("#notes").value });
+      S.session.notes = $("#notes").value;
+      const t = new Date();
+      $("#notesSaved").textContent = "saved " + t.toTimeString().slice(0, 8);
+    } catch (err) { $("#notesSaved").textContent = "not saved: " + (err.message || err); }
+  }, 800);
+});
+$("#exportBtn").addEventListener("click", async () => {
+  try {
+    const res = await api("/api/export", { id: S.session.id });
+    $("#exportPath").textContent = "exported: " + res.path;
+  } catch (err) { $("#exportPath").textContent = "export failed: " + (err.message || err); }
+});
+
+/* ---------------------------------------------------------------- sessions */
+$("#drawerToggle").addEventListener("click", async () => {
+  const drawer = $("#drawer");
+  drawer.hidden = !drawer.hidden;
+  $("#drawerToggle").setAttribute("aria-expanded", String(!drawer.hidden));
+  if (!drawer.hidden) await listSessions();
+});
+$("#drawerRefresh").addEventListener("click", listSessions);
+async function listSessions() {
+  const rows = await api("/api/sessions");
+  const list = $("#sessionList");
+  list.innerHTML = "";
+  $("#sessionsEmpty").hidden = rows.length > 0;
+  rows.forEach(row => {
+    const li = el("li");
+    const btn = el("button");
+    btn.appendChild(el("span", "when", row.created.slice(0, 16).replace("T", " ")));
+    btn.appendChild(document.createTextNode((row.fake ? "[fake] " : "") + row.question.slice(0, 110)));
+    btn.addEventListener("click", async () => {
+      $("#drawer").hidden = true;
+      $("#drawerToggle").setAttribute("aria-expanded", "false");
+      await loadSession(row.id);
+    });
+    li.appendChild(btn);
+    list.appendChild(li);
+  });
+}
+
+/* -------------------------------------------------------------------- boot */
+(async function boot() {
+  try {
+    S.config = await api("/api/config");
+  } catch (e) {
+    $("#askMsg").textContent = "server not reachable";
+    return;
+  }
+  $("#fakeBanner").hidden = !S.config.fake;
+  buildSeatRows();
+  refreshButtons();
+  /* deep link: /?session=<id> reopens a stored session (conductor addition
+     2026-09-02 — lets a session be screenshotted or shared without clicking
+     through the drawer; the id is validated before any request) */
+  try {
+    const wanted = new URLSearchParams(location.search).get("session") || "";
+    if (ID_RE.test(wanted)) await loadSession(wanted);
+  } catch (e) { $("#askMsg").textContent = "session not found"; }
+})();
+</script>
+</body>
+</html>

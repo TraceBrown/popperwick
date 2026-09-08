@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/popperwick-lane/lane/mirror/**)",
+      "Read(//Users/popperwick-lane/lane/outbox/**)",
+      "Grep",
+      "Glob",
+      "Edit(//Users/popperwick-lane/lane/outbox/**)"
+    ],
+    "deny": [
+      "Bash",
+      "BashOutput",
+      "KillShell",
+      "WebFetch",
+      "WebSearch",
+      "Task",
+      "Agent",
+      "NotebookEdit",
+      "TodoWrite",
+      "SendMessage",
+      "ListAgents",
+      "mcp__*",
+      "Read(//Users/popperwick-lane/.credentials/**)",
+      "Read(//Users/popperwick-lane/.codex/**)",
+      "Read(//Users/popperwick-lane/Library/**)",
+      "Edit(//Users/popperwick-lane/lane/mirror/**)"
+    ]
+  },
+  "env": {
+    "ANTHROPIC_BASE_URL": "https://api.kimi.com/coding",
+    "ANTHROPIC_MODEL": "k3"
+  }
+}

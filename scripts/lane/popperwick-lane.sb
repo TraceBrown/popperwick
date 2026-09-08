@@ -1,0 +1,208 @@
+;; popperwick-lane.sb — kernel-enforced cage for the popperwick-lane account.
+;;
+;; Installed by the user at /usr/local/etc/popperwick/popperwick-lane.sb
+;; (root:wheel 644) so the lane cannot rewrite its own cage. Loaded only by
+;; /usr/local/libexec/popperwick-lane-launch, which passes three parameters:
+;;
+;;   HOME_DIR   the lane account home (/Users/popperwick-lane)
+;;   RUN_ROOT   this run's private scratch dir  ($HOME_DIR/scratch/runs/<id>)
+;;   OUTBOX     this run's outbox dir           ($HOME_DIR/lane/outbox/<id>)
+;;
+;; Design of record: Sol's M4 configuration, .openai/2026-09-02-sol-lane-isolation.md.
+;; Shape: (allow default) — NOT (deny default). The 2026-08-13 Kimi-lane profile
+;; used (deny default) and every attempt to allow-list reads starved DNS; that
+;; profile also had to carry a large system-allow block. Here the UID boundary
+;; (lane home 710, /Users/OWNER 700) is the confidentiality wall, and this
+;; profile is the INTEGRITY wall: a read deny over /Users plus a late write
+;; floor. Later rules win, so the order below is load-bearing.
+;;
+;; Residuals accepted and documented (unchanged from 2026-08-13 unless noted):
+;;   - ANTHROPIC_AUTH_TOKEN is in the agent's environment by necessity; anything
+;;     the agent execs can read it. Mitigated by the UID split: `ps -E` cannot
+;;     show another user's environment.
+;;   - mach-lookup stays broad under (allow default); only the pasteboard is
+;;     denied by name.
+;;   - Network is fully allowed (the model endpoint). The 2026-08-13 narrowing
+;;     is recorded below as an OPTIONAL TIGHTENING, not active.
+;;   - Seatbelt evaluates literal paths. Every path here must be canonical
+;;     (no symlinked ancestors); the launcher asserts that for HOME_DIR.
+
+(version 1)
+(allow default)
+
+;; ---------------------------------------------------------------------------
+;; 1. READ WALL — nothing under /Users is readable...
+;; ---------------------------------------------------------------------------
+;; This covers /Users/OWNER (already unreachable at the UID layer — this is
+;; the second wall), every other account, and the lane's own home. Reads outside
+;; /Users stay open, which is what keeps DNS, TLS, dyld and the node runtime
+;; working (2026-08-13: allow-listing reads outright starves DNS).
+(deny file-read* (subpath "/Users"))
+
+;; ...except the four trees the lane legitimately needs.
+(allow file-read*
+       ;; the lane's own Claude Code install (binary + its runtime support)
+       (subpath (string-append (param "HOME_DIR") "/.local"))
+       ;; the fixed, root-owned settings file (outside /Users; explicit anyway)
+       (literal "/usr/local/etc/popperwick/settings-lane.json")
+       ;; the read-only vault mirror — the lane's only view of the vault
+       (subpath (string-append (param "HOME_DIR") "/lane/mirror"))
+       ;; this run's outbox (the agent reads back what it writes)
+       (subpath (param "OUTBOX"))
+       ;; this run's scratch root: TMPDIR, CLAUDE_CONFIG_DIR, commission.md
+       (subpath (param "RUN_ROOT")))
+
+;; Reads outside /Users are open (DNS, TLS, dyld, the node runtime), but the
+;; shared-writable trees are not "outside" in any useful sense: another process
+;; can plant a file there and any user's leftovers are readable. Denied outright
+;; (Sol Q2, 2026-09-02). Verified with the real 2.1.259 binary: local startup
+;; still completes with TMPDIR and CLAUDE_CONFIG_DIR inside RUN_ROOT.
+;; NOTE for testing: this deny is why a scratch rig under /private/tmp cannot
+;; exercise the profile — the builder's rig lives under /private/var/tmp.
+(deny file-read* (subpath "/Volumes")
+                 (subpath "/tmp")
+                 (subpath "/private/tmp")
+                 (subpath "/private/var/folders"))
+
+;; ...with ONE re-allow, forced by evidence. Under the deny above, the real
+;; 2.1.259 binary dies at startup with:
+;;     EPERM: operation not permitted, mkdir '/tmp/claude-<uid>'
+;; The harness insists on a per-UID session directory at that fixed path; TMPDIR
+;; does not redirect it. (The earlier probe passed only because /tmp/claude-501
+;; already existed and was readable — for the fresh lane UID it would NOT exist,
+;; so this would have broken the first live run under the previous profile too.)
+;; Both spellings are needed: mkdir is evaluated on the literal path (2026-08-13).
+;; The launcher pre-creates this directory, 700 and lane-owned, OUTSIDE the
+;; sandbox and refuses to run if it is a symlink or has the wrong owner/mode —
+;; which forecloses a squat by another local user on world-writable /tmp.
+(allow file-read* (subpath (param "UID_TMP"))
+                  (subpath (param "UID_TMP_PRIVATE"))
+                  ;; /tmp is a SYMLINK to /private/tmp and the harness spells the
+                  ;; session dir "/tmp/claude-<uid>"; resolving that name needs to
+                  ;; read the symlink itself or mkdir fails EPERM (reproduced).
+                  ;; This grants the link, NOT the directory: with it, `ls /tmp`
+                  ;; prints "/tmp", `ls /private/tmp` is still denied, and so is
+                  ;; every sibling entry (verified 2026-09-02).
+                  (literal "/tmp"))
+;; the WRITE half of this exception is re-stated inside the write floor below —
+;; it has to be, because the floor is later and later rules win.
+
+;; ---------------------------------------------------------------------------
+;; 2. WRITE FLOOR — deny every write, then re-allow the few real needs.
+;; ---------------------------------------------------------------------------
+;; Placed AFTER every broader allowance (Sol's 2026-09-01 work order: the
+;; 2026-08-13 profile's broad scratch allowances were the finding that kept
+;; Write suspended). Nothing below this line may widen reads.
+(deny file-write*)
+
+(allow file-write*
+       ;; /dev/null and /dev/dtracehelper: opened by the dyld/runtime startup
+       ;; path. Missing /dev/null silently killed escape tests on 2026-08-13 —
+       ;; the tests died before reaching the escape and looked like passes.
+       (literal "/dev/null")
+       (literal "/dev/dtracehelper")
+       ;; DIRECTORY SPLIT (Sol #1, 2026-09-02 — confused deputy): the agent gets
+       ;; three leaf directories, NOT the run trees themselves. result.md,
+       ;; stderr.txt, meta.json, commission.md and git-askpass.sh live in the
+       ;; parents, where the agent cannot replace one with a symlink or a FIFO
+       ;; and have the UNSANDBOXED launcher write through it (or block on it).
+       (subpath (string-append (param "OUTBOX") "/files"))
+       (subpath (string-append (param "RUN_ROOT") "/tmp"))
+       (subpath (string-append (param "RUN_ROOT") "/claude-config"))
+       ;; the per-UID session dir the harness demands (see block 1). This must be
+       ;; restated HERE, after the floor: an allow placed before (deny file-write*)
+       ;; is simply overridden — that mistake cost two probe cycles.
+       (subpath (param "UID_TMP"))
+       (subpath (param "UID_TMP_PRIVATE")))
+
+;; NO OTHER WRITE ALLOWANCE IS PRESENT, and none proved necessary. Evidence
+;; (2026-09-02, builder wave): the real 2.1.x binary was started under this exact
+;; profile with HOME_DIR=/Users/OWNER, TMPDIR and CLAUDE_CONFIG_DIR inside
+;; RUN_ROOT, and a dead endpoint (http://127.0.0.1:1). It completed local startup
+;; — writing .claude.json, sessions/, projects/ and backups/ under RUN_ROOT — and
+;; reached the API call with no write denial. No /private/var/folders write and no
+;; pseudo-terminal write was needed. TMPDIR inside RUN_ROOT is what keeps the
+;; temp traffic in bounds; do not remove it from the launcher.
+
+;; The controlling terminal stays DENIED (it is already denied by the floor
+;; above; stated so the decision is visible). A fresh open of /dev/tty was
+;; verified denied here and permitted when an allowance was added — but under
+;; `sudo` the controlling terminal IS THE CONDUCTOR'S TERMINAL, so a write there
+;; is an escape-sequence injection path from the sandboxed agent into the
+;; privileged session. Inherited descriptors are unaffected (verified: a pty
+;; inherited as stdout is writable with no allowance at all), and the launcher
+;; redirects stdout/stderr to files and stdin from /dev/null. If the harness ever
+;; needs this, it shows up in stderr.txt as "/dev/tty: Operation not permitted" —
+;; that is a finding for the Sol review, not a line to add in a hurry.
+(deny file-write* (literal "/dev/tty") (regex #"^/dev/ttys[0-9]+$"))
+
+;; ---------------------------------------------------------------------------
+;; 3. ANCESTOR IMMUTABILITY — the 2026-08-13 escape, reproduced then fixed.
+;; ---------------------------------------------------------------------------
+;; A write allowance on a subpath does not protect the CONTAINING directory:
+;; the 2026-08-13 lane renamed an ancestor and moved a protected tree out from
+;; under its deny prefix (verified: it moved the live scratchpad). Denying
+;; file-write* on the directory LITERALS blocks rename/unlink/chmod of those
+;; directories themselves while leaving their contents writable via the subpath
+;; allows above.
+(deny file-write*
+      (literal "/Users")
+      (literal (param "HOME_DIR"))
+      (literal (string-append (param "HOME_DIR") "/lane"))
+      (literal (string-append (param "HOME_DIR") "/lane/mirror"))
+      (literal (string-append (param "HOME_DIR") "/lane/outbox"))
+      (literal (string-append (param "HOME_DIR") "/scratch"))
+      (literal (string-append (param "HOME_DIR") "/scratch/runs"))
+      (literal (string-append (param "HOME_DIR") "/.credentials"))
+      (literal (string-append (param "HOME_DIR") "/.codex"))
+      ;; the run dirs themselves, and the three leaf dirs inside them: the
+      ;; launcher creates all of them before the sandbox starts, so the agent
+      ;; never needs to create, rename or delete any of them. Without these the
+      ;; subpath grants above would include the directory itself and a rename
+      ;; would move the whole writable area.
+      (literal (param "OUTBOX"))
+      (literal (param "RUN_ROOT"))
+      (literal (string-append (param "OUTBOX") "/files"))
+      (literal (string-append (param "RUN_ROOT") "/tmp"))
+      (literal (string-append (param "RUN_ROOT") "/claude-config")))
+;; The per-UID session dir (UID_TMP) is deliberately NOT in the list above.
+;; Evidence: the harness calls mkdir on that exact path UNCONDITIONALLY and
+;; treats EPERM as fatal (EEXIST is fine), so a literal write-deny there kills
+;; startup — reproduced twice, 2026-09-02. It is safe to omit: renaming it would
+;; need file-write-create on a sibling name in /tmp, and the write floor grants
+;; nothing in /tmp except this one subpath, so there is no name to rename into.
+
+;; The mirror is read-only at the kernel: it is inside the read allow-list and
+;; outside every write allow-list. Restated as an explicit subpath deny so a
+;; future edit to the write floor cannot silently open it.
+(deny file-write* (subpath (string-append (param "HOME_DIR") "/lane/mirror")))
+
+;; ---------------------------------------------------------------------------
+;; 4. EXPLICIT SECRET DENIES — redundant today, load-bearing after any edit.
+;; ---------------------------------------------------------------------------
+;; All three are already unreadable via the /Users deny in block 1 (they were
+;; never re-allowed). Stated again so that widening block 1 cannot expose them
+;; by accident. Sol Q4: "an enumerated secret deny list is inherently
+;; incomplete" — this list is a backstop to the wall, never the wall itself.
+(deny file-read*
+      (subpath (string-append (param "HOME_DIR") "/.credentials"))
+      (subpath (string-append (param "HOME_DIR") "/.codex"))
+      (subpath (string-append (param "HOME_DIR") "/Library")))
+
+;; ---------------------------------------------------------------------------
+;; 5. NETWORK — allowed (the model endpoint), with one mach service denied.
+;; ---------------------------------------------------------------------------
+;; The lane calls the Kimi Anthropic-compatible endpoint, so egress stays open
+;; under (allow default). The 2026-08-13 unix-socket finding (blanket
+;; network-outbound reached the live ssh-agent) does not carry over: the
+;; ssh-agent socket belongs to the conductor account's launchd session and is not reachable
+;; from UID 502. Kept as the pasteboard deny only, which cost nothing there.
+(deny mach-lookup (global-name "com.apple.pasteboard.1"))  ;; pbpaste read the real clipboard (2026-08-13)
+
+;; OPTIONAL TIGHTENING — NOT ACTIVE. Verbatim from the 2026-08-13 profile, where
+;; it was verified to leave the model endpoint reachable. Enable only with a
+;; re-run of the full battery; `(remote tcp)` instead of `(remote ip ...)` parses
+;; fine and silently kills ALL egress.
+;; (deny network-outbound)
+;; (allow network-outbound (remote ip "*:*"))
+;; (allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))

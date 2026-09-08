@@ -1,0 +1,528 @@
+#!/bin/bash
+# popperwick-lane-launch — the ONE program the conductor may run as the lane user.
+#
+# Installed by the user at /usr/local/libexec/popperwick-lane-launch (root:wheel
+# 755) and reached through exactly one sudoers line:
+#
+#   OWNER ALL=(popperwick-lane) NOPASSWD:NOSETENV: /usr/local/libexec/popperwick-lane-launch ""
+#
+# The trailing "" is the sudoers empty-argument sentinel: it authorises the
+# program ONLY with no arguments at all, so the rule cannot be widened into a
+# general shell even if this script's own argument check were bypassed.
+#
+# Daily use, from the conductor's own account:
+#
+#   printf '%s' "$commission" | sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-launch
+#
+# It takes NO arguments (so the sudoers line cannot be turned into a general
+# shell) and reads the commission from stdin. Design of record: Sol's M4
+# configuration, .openai/2026-09-02-sol-lane-isolation.md; runbook:
+# "Journal/Lane Account — popperwick-lane Setup Runbook (2026-09-02).md".
+#
+# What it does, in order:
+#   1. refuse arguments, refuse to run as anyone but the lane user, set HOME
+#      itself (NOSETENV means sudo may hand us nothing);
+#   2. create a per-run scratch dir (700) and a per-run outbox dir (2750) BEFORE
+#      anything can fail with nowhere to report;
+#   2b. DIRECTORY SPLIT (Sol, 2026-09-02, confused-deputy finding): the agent may
+#      write ONLY inside <outbox>/files, <run>/tmp and <run>/claude-config. The
+#      files the LAUNCHER writes unsandboxed — result.md, stderr.txt, meta.json,
+#      commission.md, git-askpass.sh — live in the protected parents, so the
+#      agent cannot replace one with a symlink or a FIFO and make the launcher
+#      write through it (or hang on it);
+#   2c. ONE RUN AT A TIME: an atomic mkdir lock at $HOME/scratch/.lock, released
+#      by the EXIT trap. The per-UID session directory /tmp/claude-<uid> that
+#      the harness insists on is validated (never a symlink, lane-owned, 700)
+#      and EMPTIED before each run, so nothing — file or unix socket — carries
+#      over between runs. Both are Sol's routine-use conditions for that
+#      allowance; without the lock, two runs would empty it under each other;
+#   3. read the commission from stdin, capped at 200 KB, empty refused;
+#   4. refresh the read-only mirror using a per-run GIT_ASKPASS helper, so the
+#      GitHub token is used before the sandbox starts and never enters the
+#      agent's argv, environment, or logs;
+#   5. build a minimal environment and run Claude Code under sandbox-exec with
+#      the root-owned Seatbelt profile and the root-owned settings file. The
+#      commission goes in on STDIN, never in argv (argv is world-readable via
+#      ps). Flags are mandatory and unconditional: a build that rejects one
+#      fails the run, which is the intended fail-closed behaviour;
+#   6. write result.md / stderr.txt / meta.json / commission.md into the outbox
+#      and exit with the agent's exit code.
+#
+# CONVENTION DEVIATIONS, deliberate (the vault's digest scripts do the opposite):
+#   * `set -euo pipefail`, NOT the digests' `set -u` fail-open. A digest that
+#     half-fails should still render a dashboard; a confinement launcher that
+#     half-fails must not start the agent at all. Every abort still writes an
+#     honest line to the run's stderr.txt, which is the fail-open half that
+#     matters here: the conductor always gets a file saying what happened.
+#   * The minimal environment is built by scrubbing this process's environment
+#     and exporting only the wanted names — NOT with `env -i NAME=value`, which
+#     would put the model token in argv where any local user can read it with
+#     `ps`. A process environment is not readable across UIDs on macOS; argv is.
+#
+# TEST HOOKS: ALLOW_TEST_OVERRIDE below ships as 0, which disables all of them
+# unconditionally. With it set to 1 (a builder's private copy only, never the
+# installed file) these env vars are honored so the whole script can be
+# exercised with a fake home, a fake claude, and a file:// mirror:
+#   POPPERWICK_LAUNCH_TEST_USER, POPPERWICK_LAUNCH_TEST_HOME,
+#   POPPERWICK_LAUNCH_TEST_ETC, POPPERWICK_LAUNCH_TEST_MIRROR_URL,
+#   POPPERWICK_LAUNCH_TEST_UID_TMP (mandatory in tests — the session dir is
+#   emptied, so it must never point at a live one)
+# The installed copy must always report ALLOW_TEST_OVERRIDE=0:
+#   grep -n '^ALLOW_TEST_OVERRIDE=' /usr/local/libexec/popperwick-lane-launch
+
+set -euo pipefail
+
+# Fixed PATH for the launcher itself: sudo's secure_path is not ours to assume,
+# and every tool used below is in one of these two directories.
+PATH='/usr/bin:/bin'
+export PATH
+
+# --- compile-time constants -------------------------------------------------
+ALLOW_TEST_OVERRIDE=0                       # 0 in every installed copy. See above.
+LANE_USER='popperwick-lane'
+LANE_HOME='/Users/popperwick-lane'
+ETC_DIR='/usr/local/etc/popperwick'
+MIRROR_URL='https://github.com/OWNER/private-share.git'
+MIRROR_BRANCH='main'
+MAX_COMMISSION_BYTES=204800                 # 200 KB, refused (not truncated) above this
+RUN_TIMEOUT_S=3600                          # 1 h wall clock, then TERM the whole
+                                            # process group, then KILL after 15 s
+SANDBOX_EXEC='/usr/bin/sandbox-exec'
+GIT_BIN='/usr/bin/git'
+SHASUM='/usr/bin/shasum'
+
+# Files land group-readable (640) and dirs group-traversable (750) so the
+# conductor, via the popperwick-readers group, can read the outbox. The run
+# scratch dir is chmod 700 explicitly right after it is created.
+umask 027
+
+# --- test-hook resolution (no-op unless ALLOW_TEST_OVERRIDE=1) --------------
+if [ "$ALLOW_TEST_OVERRIDE" -eq 1 ]; then
+  LANE_USER="${POPPERWICK_LAUNCH_TEST_USER:-$LANE_USER}"
+  LANE_HOME="${POPPERWICK_LAUNCH_TEST_HOME:-$LANE_HOME}"
+  ETC_DIR="${POPPERWICK_LAUNCH_TEST_ETC:-$ETC_DIR}"
+  MIRROR_URL="${POPPERWICK_LAUNCH_TEST_MIRROR_URL:-$MIRROR_URL}"
+fi
+
+PROFILE="$ETC_DIR/popperwick-lane.sb"
+SETTINGS="$ETC_DIR/settings-lane.json"
+
+# --- reporting --------------------------------------------------------------
+# Before the outbox exists there is only stderr; after it exists every message
+# is also appended to the run's stderr.txt, which is the conductor's record.
+OUTBOX_RUN=''
+AGENT_STARTED=0
+LOCK_DIR=''       # single-run lock; see "one run at a time" below
+LOCK_HELD=0       # only the holder ever removes it
+
+say() {  # informational, never fatal
+  printf 'popperwick-lane-launch: %s\n' "$1" >&2
+  [ -n "$OUTBOX_RUN" ] && printf 'launcher: %s\n' "$1" >>"$OUTBOX_RUN/stderr.txt" || true
+}
+
+die() {  # fatal; $2 = exit code (default 70)
+  say "FATAL: $1"
+  exit "${2:-70}"
+}
+
+usage() {
+  printf 'usage: printf %%s "$commission" | sudo -n -u %s %s\n' "$LANE_USER" "/usr/local/libexec/popperwick-lane-launch" >&2
+  printf '       (no arguments are accepted; the commission is read from stdin)\n' >&2
+  printf '       sudoers: OWNER ALL=(%s) NOPASSWD:NOSETENV: %s ""\n' "$LANE_USER" '/usr/local/libexec/popperwick-lane-launch' >&2
+}
+
+# Any unplanned abort still leaves a line in the outbox rather than silence.
+trap 'rc=$?; if [ "$rc" -ne 0 ] && [ -n "$OUTBOX_RUN" ] && [ "$AGENT_STARTED" -eq 0 ]; then
+        printf "launcher: ABORTED before the agent started (exit %s)\n" "$rc" >>"$OUTBOX_RUN/stderr.txt" 2>/dev/null || true
+      fi
+      if [ "$LOCK_HELD" -eq 1 ]; then
+        rm -f "$LOCK_DIR/holder" 2>/dev/null || true
+        rmdir "$LOCK_DIR" 2>/dev/null || true
+      fi' EXIT
+
+# --- 1. arguments, identity, home ------------------------------------------
+if [ "$#" -ne 0 ]; then
+  usage
+  exit 64                                   # EX_USAGE
+fi
+
+whoami_now="$(id -un)"
+[ "$whoami_now" = "$LANE_USER" ] || die "must run as $LANE_USER, not $whoami_now" 77
+
+# NOSETENV means sudo may strip or rewrite HOME; never trust the inherited value.
+HOME="$LANE_HOME"
+export HOME
+[ -d "$HOME" ] || die "lane home $HOME does not exist"
+# Seatbelt matches literal paths, so a symlinked ancestor would silently move
+# every allow/deny rule off the real directory.
+home_real="$(cd "$HOME" 2>/dev/null && pwd -P)" || die "cannot enter $HOME"
+[ "$home_real" = "$HOME" ] || die "lane home is not canonical ($HOME resolves to $home_real)"
+
+# Seatbelt matches literal paths, so a symlinked ancestor would silently move
+# every allow/deny rule off the real directory. Every path the profile names has
+# to resolve to itself.
+assert_canonical_dir() {   # $1 = path, $2 = label
+  local _r
+  _r="$(cd "$1" 2>/dev/null && pwd -P)" || die "$2 ($1) does not exist or cannot be entered"
+  [ "$_r" = "$1" ] || die "$2 is not canonical: $1 resolves to $_r"
+}
+
+MIRROR="$HOME/lane/mirror"
+OUTBOX_ROOT="$HOME/lane/outbox"
+RUNS_ROOT="$HOME/scratch/runs"
+TOKEN_FILE="$HOME/.credentials/model.token"
+GH_TOKEN_FILE="$HOME/.credentials/github.token"
+GH_USER_FILE="$HOME/.credentials/github.user"   # optional; default below
+# Claude Code insists on a per-UID session directory at this fixed path (TMPDIR
+# does not redirect it); under the profile's /tmp read deny it dies with
+# "EPERM ... mkdir '/tmp/claude-<uid>'" if it cannot see one. We create it here,
+# outside the sandbox, so that a squatter on world-writable /tmp cannot own it.
+LANE_UID="$(id -u)"
+UID_TMP="/tmp/claude-$LANE_UID"
+UID_TMP_PRIVATE="/private/tmp/claude-$LANE_UID"
+if [ "$ALLOW_TEST_OVERRIDE" -eq 1 ]; then
+  # Tests MUST redirect this: the launcher empties the directory, and a builder
+  # running as a real user would otherwise wipe their own live session dir.
+  # Sol third pass 2026-09-02: a fallback here was fail-open — REQUIRED, not optional.
+  [ -n "${POPPERWICK_LAUNCH_TEST_UID_TMP:-}" ] || \
+    die "POPPERWICK_LAUNCH_TEST_UID_TMP is required when ALLOW_TEST_OVERRIDE=1" 69
+  UID_TMP="$POPPERWICK_LAUNCH_TEST_UID_TMP"
+  UID_TMP_PRIVATE="$POPPERWICK_LAUNCH_TEST_UID_TMP"
+fi
+
+[ -x "$SANDBOX_EXEC" ] || die "$SANDBOX_EXEC missing"
+[ -x "$GIT_BIN" ]      || die "$GIT_BIN missing"
+[ -r "$PROFILE" ]      || die "Seatbelt profile not readable at $PROFILE (install it as root:wheel 644)"
+[ -r "$SETTINGS" ]     || die "settings not readable at $SETTINGS (install it as root:wheel 644)"
+[ -d "$OUTBOX_ROOT" ]  || die "outbox root $OUTBOX_ROOT does not exist (runbook Phase 2)"
+[ -x '/bin/realpath' ] || die "/bin/realpath missing"
+assert_canonical_dir "$HOME/lane"   "the lane tree"
+assert_canonical_dir "$OUTBOX_ROOT" "the outbox root"
+
+# The lane's own Claude Code install: home first, then PATH. Never the
+# conductor's binary — /Users/OWNER is 700 and unreachable from this UID.
+CLAUDE_BIN=''
+if [ -x "$HOME/.local/bin/claude" ]; then
+  CLAUDE_BIN="$HOME/.local/bin/claude"
+else
+  CLAUDE_BIN="$(PATH="$HOME/.local/bin:/usr/bin:/bin" command -v claude 2>/dev/null || true)"
+fi
+[ -n "$CLAUDE_BIN" ] || die "no claude binary found at $HOME/.local/bin/claude or on PATH — install Claude Code as $LANE_USER (runbook Phase 2 step 9)" 69
+# Follow every symlink (the install is normally .local/bin/claude -> .local/share/
+# claude/versions/<v>) and REQUIRE the real file to sit under $HOME/.local, the
+# only tree inside /Users the profile re-allows for reading. Fail closed: a
+# binary anywhere else cannot be read inside the cage.
+CLAUDE_REAL="$(/bin/realpath "$CLAUDE_BIN" 2>/dev/null || true)"
+[ -n "$CLAUDE_REAL" ] || die "cannot resolve $CLAUDE_BIN" 69
+case "$CLAUDE_REAL" in
+  "$home_real/.local/"*) CLAUDE_BIN="$CLAUDE_REAL" ;;
+  *) die "claude resolves to $CLAUDE_REAL, outside $HOME/.local — the Seatbelt profile cannot read it" 69 ;;
+esac
+
+# --- 2. per-run directories (before anything else can fail) -----------------
+RUN_ID="$(date -u '+%Y%m%dT%H%M%SZ')-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+RUN_ROOT="$RUNS_ROOT/$RUN_ID"
+
+# Validate BEFORE mutating (Sol, third pass): a symlink at $HOME/scratch or
+# $HOME/scratch/runs would otherwise be followed by mkdir -p and chmod, so the
+# launcher would be the one to widen permissions on a directory outside the
+# lane's own tree. Nothing here follows a link: each path is either created by
+# us or proven canonical first.
+for _d in "$HOME/scratch" "$RUNS_ROOT"; do
+  if [ -e "$_d" ] || [ -L "$_d" ]; then
+    [ -d "$_d" ] || die "$_d exists but is not a directory" 69
+    assert_canonical_dir "$_d" "$_d"
+  else
+    mkdir "$_d" || die "cannot create $_d" 69
+  fi
+done
+chmod 700 "$HOME/scratch" "$RUNS_ROOT"
+
+# ONE RUN AT A TIME. mkdir is the atomic primitive (it fails if the name
+# exists, with no window between test and create). Required before the
+# /tmp/claude-<uid> handling below is safe: two concurrent runs would empty
+# each other's session directory out from under a live harness. A stale lock
+# after a crash is deliberately manual to clear — the message says so.
+LOCK_DIR="$HOME/scratch/.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  die "another run is active (lock $LOCK_DIR, holder: $(cat "$LOCK_DIR/holder" 2>/dev/null | tr -d '\n' || true)); if that run is dead, remove the lock by hand" 75
+fi
+LOCK_HELD=1
+printf '%s pid=%s %s\n' "$RUN_ID" "$$" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" >"$LOCK_DIR/holder"
+
+# /tmp is a symlink to /private/tmp: create and check the canonical one. The
+# harness demands this directory (see the profile); it lives in world-writable
+# /tmp, so it is validated strictly and EMPTIED between runs — no file, and no
+# unix socket, survives from a previous run.
+if [ -L "$UID_TMP_PRIVATE" ]; then
+  die "$UID_TMP_PRIVATE is a symlink — refusing (squatted session dir)" 69
+elif [ -e "$UID_TMP_PRIVATE" ]; then
+  [ -d "$UID_TMP_PRIVATE" ] || die "$UID_TMP_PRIVATE exists but is not a directory" 69
+  uid_tmp_owner="$(stat -f '%u %Lp' "$UID_TMP_PRIVATE" 2>/dev/null || echo '? ?')"
+  [ "$uid_tmp_owner" = "$LANE_UID 700" ] || \
+    die "$UID_TMP_PRIVATE is owner/mode '$uid_tmp_owner', expected '$LANE_UID 700' — refusing" 69
+  # Sol third pass 2026-09-02: a warning here let persistent state survive a
+  # failed delete, contradicting the routine-use condition. Fail closed, then
+  # VERIFY the directory is empty before the run proceeds.
+  find "$UID_TMP_PRIVATE" -mindepth 1 -delete 2>/dev/null || \
+    die "cannot fully empty $UID_TMP_PRIVATE — refusing to run" 69
+  uid_tmp_left="$(find "$UID_TMP_PRIVATE" -mindepth 1 -print -quit 2>/dev/null)" || \
+    die "cannot verify that $UID_TMP_PRIVATE is empty — refusing to run" 69
+  [ -z "$uid_tmp_left" ] || \
+    die "$UID_TMP_PRIVATE is not empty after purge — refusing to run" 69
+else
+  mkdir "$UID_TMP_PRIVATE" || die "cannot create $UID_TMP_PRIVATE" 69
+  chmod 700 "$UID_TMP_PRIVATE"
+fi
+
+mkdir "$RUN_ROOT"
+chmod 700 "$RUN_ROOT"
+mkdir "$RUN_ROOT/tmp" "$RUN_ROOT/claude-config"
+chmod 700 "$RUN_ROOT/tmp" "$RUN_ROOT/claude-config"
+
+mkdir "$OUTBOX_ROOT/$RUN_ID"
+OUTBOX_RUN="$OUTBOX_ROOT/$RUN_ID"
+: >"$OUTBOX_RUN/stderr.txt"
+# The agent's ONLY writable place in the outbox. Everything the launcher writes
+# stays in the parent, which the profile denies to the agent.
+mkdir "$OUTBOX_RUN/files"
+# 2750 if we can. Setting the setgid bit needs membership in the directory's
+# group, and the LANE USER IS NOT a member of popperwick-readers — so this
+# chmod is expected to fall back to 750, which is not a problem: macOS uses BSD
+# semantics and a new file takes the GROUP OF ITS PARENT DIRECTORY with or
+# without setgid. What actually decides whether the conductor can read the run
+# is the group, checked next.
+for _d in "$OUTBOX_RUN" "$OUTBOX_RUN/files"; do
+  chmod 2750 "$_d" 2>/dev/null || chmod 750 "$_d" 2>/dev/null || \
+    say "WARNING could not chmod the outbox dir $_d"
+done
+outbox_group="$(stat -f '%Sg' "$OUTBOX_RUN" 2>/dev/null || echo '?')"
+[ "$outbox_group" = 'popperwick-readers' ] || \
+  say "WARNING outbox run dir group is '$outbox_group', not popperwick-readers — the conductor will not be able to read it; fix the outbox root: chmod 2750 $OUTBOX_ROOT && chgrp popperwick-readers $OUTBOX_ROOT"
+
+# --- 3. the commission ------------------------------------------------------
+# Bounded read: head stops at the cap, then the size decides accept/refuse, so a
+# hostile stdin can neither fill the disk nor be silently truncated into the run.
+head -c "$((MAX_COMMISSION_BYTES + 1))" >"$RUN_ROOT/commission.md" || true
+chmod 600 "$RUN_ROOT/commission.md"
+commission_bytes="$(wc -c <"$RUN_ROOT/commission.md" | tr -d ' ')"
+[ "$commission_bytes" -gt 0 ] || die "empty commission on stdin (nothing to do)" 65
+[ "$commission_bytes" -le "$MAX_COMMISSION_BYTES" ] || \
+  die "commission is larger than $MAX_COMMISSION_BYTES bytes (read $commission_bytes+); refusing" 65
+cp "$RUN_ROOT/commission.md" "$OUTBOX_RUN/commission.md"
+chmod 640 "$OUTBOX_RUN/commission.md"   # cp copies the 600 mode; the outbox copy must stay group-readable
+commission_sha="$("$SHASUM" -a 256 "$RUN_ROOT/commission.md" | cut -d' ' -f1)"
+
+# --- 4. mirror refresh ------------------------------------------------------
+# The token is used HERE, outside the sandbox, through an askpass helper that
+# reads the credential file at call time. It is never in argv (git would show it
+# in `ps`), never exported, and never written anywhere but its own 600 file.
+ASKPASS="$RUN_ROOT/git-askpass.sh"
+{
+  printf '#!/bin/sh\n'
+  printf '# per-run GIT_ASKPASS helper. git passes the prompt text as $1.\n'
+  printf 'case "$1" in\n'
+  printf '  [Uu]sername*) if [ -r %s ]; then exec /bin/cat %s; else printf %%s x-access-token; fi ;;\n' "'$GH_USER_FILE'" "'$GH_USER_FILE'"
+  printf '  *)            exec /bin/cat %s ;;\n' "'$GH_TOKEN_FILE'"
+  printf 'esac\n'
+} >"$ASKPASS"
+chmod 700 "$ASKPASS"
+
+mirror_refresh='ok'
+# fetch + reset --hard (not `pull --ff-only`): the mirror is a read-only replica
+# of a filtered re-export, so the only correct end state is "identical to the
+# remote". --ff-only would refuse and silently leave the lane on stale content
+# if the share repo were ever rebuilt or force-pushed; clean -ffdx removes any
+# stray file so what the agent reads is exactly what the remote holds.
+# `-c credential.helper=` neutralises any keychain helper: a `sudo -u` process
+# cannot be assumed to unlock the lane's login keychain (Sol Q5).
+# EVERY failure here is FATAL (Sol, 2026-09-02): a run against a stale or dirty
+# mirror is a run whose provenance the conductor cannot state, and a lane whose
+# view of the vault can be poisoned locally is not read-only in any useful sense.
+# Validate an EXISTING mirror before git can act on it (Sol, third pass): the
+# post-clone assertion below runs too late — `reset --hard` and `clean -ffdx`
+# would already have written through a symlinked mirror into whatever it points
+# at. A path that does not exist yet is fine; the clone creates it.
+if [ -e "$MIRROR" ] || [ -L "$MIRROR" ]; then
+  [ -d "$MIRROR" ] || die "$MIRROR exists but is not a directory" 69
+  assert_canonical_dir "$MIRROR" "the mirror"
+fi
+if [ -d "$MIRROR/.git" ]; then
+  ( export GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0
+    "$GIT_BIN" -C "$MIRROR" -c credential.helper= fetch --depth 1 --prune origin \
+       "+refs/heads/$MIRROR_BRANCH:refs/remotes/origin/$MIRROR_BRANCH" \
+    && "$GIT_BIN" -C "$MIRROR" reset --hard "refs/remotes/origin/$MIRROR_BRANCH" \
+    && "$GIT_BIN" -C "$MIRROR" clean -ffdx ) >>"$OUTBOX_RUN/stderr.txt" 2>&1 \
+    || die "mirror refresh FAILED — refusing to run on an unrefreshed mirror" 69
+else
+  ( export GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0
+    "$GIT_BIN" -c credential.helper= clone --depth 1 --branch "$MIRROR_BRANCH" \
+       "$MIRROR_URL" "$MIRROR" ) >>"$OUTBOX_RUN/stderr.txt" 2>&1 \
+    || die "mirror clone FAILED" 69
+fi
+assert_canonical_dir "$MIRROR" "the mirror"
+mirror_head="$("$GIT_BIN" -C "$MIRROR" rev-parse HEAD 2>/dev/null || true)"
+mirror_want="$("$GIT_BIN" -C "$MIRROR" rev-parse "refs/remotes/origin/$MIRROR_BRANCH" 2>/dev/null || true)"
+[ -n "$mirror_head" ] || die "mirror at $MIRROR is unusable (no HEAD) — refusing to run" 69
+[ "$mirror_head" = "$mirror_want" ] || \
+  die "mirror HEAD $mirror_head != origin/$MIRROR_BRANCH ${mirror_want:-<missing>} — refusing to run" 69
+mirror_dirty="$("$GIT_BIN" -C "$MIRROR" status --porcelain --untracked-files=all 2>&1)"
+[ -z "$mirror_dirty" ] || \
+  die "mirror working tree is not clean (tracked or untracked changes) — refusing to run: $(printf '%s' "$mirror_dirty" | head -3 | tr '\n' ';')" 69
+
+# --- 5. the agent -----------------------------------------------------------
+model_token=''
+if [ -r "$TOKEN_FILE" ]; then
+  model_token="$(cat "$TOKEN_FILE")"
+  model_token="${model_token%%$'\n'*}"      # first line only; never printed
+fi
+[ -n "$model_token" ] || die "no model token at $TOKEN_FILE (runbook Phase 2 step 7)" 69
+
+profile_sha="$("$SHASUM" -a 256 "$PROFILE"  | cut -d' ' -f1)"
+settings_sha="$("$SHASUM" -a 256 "$SETTINGS" | cut -d' ' -f1)"
+
+# Everything below runs with only the names we set. scrub_env unsets every
+# inherited variable first (bash keeps working: only builtins are used until
+# PATH is set again).
+scrub_env() {
+  local kv name
+  while IFS= read -r -d '' kv; do
+    name="${kv%%=*}"
+    case "$name" in
+      ''|*[!A-Za-z0-9_]*) continue ;;
+    esac
+    unset "$name" 2>/dev/null || true
+  done < <(/usr/bin/env -0)
+}
+
+# NOTE on $HOME below: HOME is the one variable this script exports, so
+# scrub_env unsets it. Each subshell copies it into a plain (unexported)
+# variable FIRST — unexported variables are invisible to `env` and survive the
+# scrub. Same reason RUN_ROOT, OUTBOX_RUN, CLAUDE_BIN and model_token are never
+# exported anywhere in this script.
+
+# Version string for meta.json, taken with the same minimal environment but
+# outside the sandbox, so a denial cannot be mistaken for a version. No pipes:
+# under `pipefail` a SIGPIPE'd producer would poison the result.
+claude_version="$( _home="$HOME"
+                   scrub_env
+                   export PATH="$_home/.local/bin:/usr/bin:/bin" HOME="$_home" \
+                          TMPDIR="$RUN_ROOT/tmp" CLAUDE_CONFIG_DIR="$RUN_ROOT/claude-config"
+                   "$CLAUDE_BIN" --version 2>/dev/null || true )"
+claude_version="${claude_version%%$'\n'*}"
+
+# Flags are MANDATORY and unconditional (Sol, 2026-09-02): no capability
+# detection, no fallback. A build that rejects one of these fails the run, which
+# is what fail-closed means here.
+#   --bare                     no hooks, no plugin sync, no keychain reads, no
+#                              CLAUDE.md auto-discovery (so a CLAUDE.md inside
+#                              the mirror cannot become instructions)
+#   --safe-mode                no customizations of any kind
+#   --disable-slash-commands   no skills
+#   --permission-prompts none  never wait on a prompt nobody can answer
+#   --strict-mcp-config        with no --mcp-config: no MCP servers at all
+#   --tools ...                the built-in set, restricted
+#   -p                         print mode; THE COMMISSION ARRIVES ON STDIN, so
+#                              it never appears in argv (ps is world-readable)
+claude_flags='--bare --safe-mode --disable-slash-commands --permission-prompts none --settings --strict-mcp-config --tools -p'
+claude_args=( --bare --safe-mode --disable-slash-commands --permission-prompts none
+              --settings "$SETTINGS" --strict-mcp-config
+              --tools 'Read,Grep,Glob,Write,Edit' -p )
+
+started_at="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+t0="$(date '+%s')"
+AGENT_STARTED=1
+# Written by the watchdog only. The agent cannot create, delete or fake it: the
+# root of RUN_ROOT is not in its write allow-list (only tmp/ and claude-config/).
+TIMEOUT_MARK="$RUN_ROOT/.timed_out"
+rc=0
+# Job control ON: bash then puts each background job in its OWN process group, so
+# the watchdog can signal the whole tree rather than just the leader (verified on
+# this bash 3.2: child pgid == child pid, `kill -TERM -<pid>` accepted).
+set -m
+(
+  _home="$HOME"
+  scrub_env
+  export PATH="$_home/.local/bin:/usr/bin:/bin"
+  export HOME="$_home"
+  export LANG='en_US.UTF-8'
+  export TMPDIR="$RUN_ROOT/tmp"
+  export CLAUDE_CONFIG_DIR="$RUN_ROOT/claude-config"
+  export ANTHROPIC_AUTH_TOKEN="$model_token"
+  cd "$OUTBOX_RUN/files" || exit 70
+  exec "$SANDBOX_EXEC" -D RUN_ROOT="$RUN_ROOT" -D OUTBOX="$OUTBOX_RUN" -D HOME_DIR="$HOME" \
+       -D UID_TMP="$UID_TMP" -D UID_TMP_PRIVATE="$UID_TMP_PRIVATE" \
+       -f "$PROFILE" "$CLAUDE_BIN" "${claude_args[@]}"
+) <"$RUN_ROOT/commission.md" >"$OUTBOX_RUN/result.md" 2>>"$OUTBOX_RUN/stderr.txt" &
+agent_pid=$!
+# Wall-clock watchdog: a wedged endpoint otherwise hangs the run forever
+# (observed: the harness retries a dead endpoint instead of exiting). TERM the
+# group, then KILL it 15 s later so a child that ignores TERM cannot outlive the
+# run. The marker is written BEFORE the signal, so meta.json reports the timeout
+# from a launcher-owned fact, never from an exit code the agent could produce.
+(
+  /bin/sleep "$RUN_TIMEOUT_S"
+  : >"$TIMEOUT_MARK"
+  kill -TERM -"$agent_pid" 2>/dev/null || kill -TERM "$agent_pid" 2>/dev/null || true
+  /bin/sleep 15
+  kill -KILL -"$agent_pid" 2>/dev/null || kill -KILL "$agent_pid" 2>/dev/null || true
+) >/dev/null 2>&1 &
+watchdog_pid=$!
+set +m
+# The wait is wrapped so bash's job-control notice ("Terminated: 15 ( ... )"),
+# which would otherwise dump the whole subshell text onto the conductor's
+# terminal on every timeout, does not appear. The timeout is reported by the
+# marker file and by meta.json.
+{ wait "$agent_pid" || rc=$?; } 2>/dev/null
+# If the watchdog already fired, LET IT FINISH: the leader can exit on TERM while
+# a child ignores it, and killing the watchdog during its 15 s grace would cancel
+# the KILL phase and leave that child running. Only a watchdog that never fired
+# is cancelled here.
+if [ -f "$TIMEOUT_MARK" ]; then
+  wait "$watchdog_pid" 2>/dev/null || true
+else
+  kill -TERM -"$watchdog_pid" 2>/dev/null || kill -TERM "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+fi
+t1="$(date '+%s')"
+elapsed=$(( t1 - t0 ))
+timed_out='false'
+if [ -f "$TIMEOUT_MARK" ]; then
+  timed_out='true'
+  say "WARNING the ${RUN_TIMEOUT_S}s watchdog fired: the agent's process group was TERMed, then KILLed"
+fi
+
+# --- 6. meta.json -----------------------------------------------------------
+# Hand-rolled JSON so the lane account needs no python3. Only the version string
+# is externally produced, and it goes through the escaper.
+json_escape() {
+  printf '%s' "$1" | LC_ALL=C sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/[[:cntrl:]]//g'
+}
+{
+  printf '{\n'
+  printf '  "run_id": "%s",\n'          "$(json_escape "$RUN_ID")"
+  printf '  "ts": "%s",\n'              "$(json_escape "$started_at")"
+  printf '  "elapsed_s": %s,\n'         "$elapsed"
+  printf '  "exit_code": %s,\n'         "$rc"
+  printf '  "timed_out": %s,\n'         "$timed_out"
+  printf '  "commission_sha256": "%s",\n' "$(json_escape "$commission_sha")"
+  printf '  "commission_bytes": %s,\n'  "$commission_bytes"
+  printf '  "mirror_head": "%s",\n'     "$(json_escape "$mirror_head")"
+  printf '  "mirror_refresh": "%s",\n'  "$(json_escape "$mirror_refresh")"
+  printf '  "settings_sha256": "%s",\n' "$(json_escape "$settings_sha")"
+  printf '  "profile_sha256": "%s",\n'  "$(json_escape "$profile_sha")"
+  printf '  "claude_bin": "%s",\n'      "$(json_escape "$CLAUDE_BIN")"
+  printf '  "claude_version": "%s",\n'  "$(json_escape "$claude_version")"
+  printf '  "claude_flags": "%s",\n'    "$(json_escape "$claude_flags")"
+  printf '  "run_root": "%s",\n'        "$(json_escape "$RUN_ROOT")"
+  printf '  "outbox": "%s"\n'           "$(json_escape "$OUTBOX_RUN")"
+  printf '}\n'
+} >"$OUTBOX_RUN/meta.json"
+
+# --- 7. cleanup -------------------------------------------------------------
+# The run's temp tree goes; commission.md, the askpass helper and the harness's
+# own config/transcripts stay in the lane's private scratch for audit. NOTHING
+# under the outbox is ever deleted here.
+rm -rf "$RUN_ROOT/tmp" 2>/dev/null || true
+
+exit "$rc"

@@ -1,0 +1,2282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roundtable</title>
+<!--
+  DESIGN RATIONALE
+
+  Identity: a transcript instrument — one scrolling column of evidence read the
+  way a court record is read, where the chrome is ink-neutral and every
+  saturated colour on the page means something about the evidence.
+
+  Palette (light): bg #f5f6f8 · surface #ffffff · surface-2 #eceef2 ·
+  border #d5d9e0 · text #14171c · muted #5c626c · accent(ink) #1b1f27 with
+  #ffffff ink-text · authors gpt #1d6fa5 / kimi #4f57b8 / glm #17756f on fills
+  #e4eef6 / #e8e9f8 / #dceeeb · status working #9a6410 · done #2f6d43 ·
+  error #a8322c.
+  Palette (dark): bg #111318 · surface #191c22 · surface-2 #222630 ·
+  border #333846 · text #e6e8ec · muted #98a0ad · accent(ink) #e9ecf2 with
+  #12141a ink-text · authors gpt #78b6e0 / kimi #9aa2f0 / glm #6cc4b8 on fills
+  #1b2a36 / #212439 / #14302d · status working #d9a441 · done #77bd8c ·
+  error #e08a83.
+
+  Type roles: one system sans stack for prose and controls; one ui-monospace
+  stack for CLI header lines, packets, code, seat and status chips, timers and
+  the rank matrix (all tabular-nums). Weight — not size — separates an author
+  name from its metadata; nothing on the page is larger than 17px.
+
+  Deliberate risk: THE ACCENT IS INK, NOT A HUE. Buttons, focus rings and the
+  selected row are near-black (near-white in dark). The whole colour budget is
+  spent on the two evidence channels, which are separated by FORM as well as
+  hue: who spoke = a hue-filled monogram chip; what happened = uppercase
+  monospace with a status dot. A failed seat is therefore the loudest thing on
+  screen, and no decoration competes with it. If the user wants a branded
+  accent, --accent is the single knob to turn.
+
+  Rejected: tabs or accordions over answers (evidence scrolls, it never hides —
+  the review texts render expanded, not in a disclosure); chat bubbles (they
+  waste the width these answers need); coloured side-stripe cards; gradients;
+  emoji; a card inside a card of the same surface; and any external asset —
+  this file issues no request but same-origin fetch and EventSource.
+-->
+<style>
+:root {
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #eceef2;
+  --border: #d5d9e0;
+  --border-strong: #b7bec9;
+  --text: #14171c;
+  --muted: #5c626c;
+  --accent: #1b1f27;          /* ink: chrome only, never evidence */
+  --accent-ink: #ffffff;
+  --work: #9a6410;
+  --done: #2f6d43;
+  --err: #a8322c;
+  --gpt: #1d6fa5;  --gpt-bg: #e4eef6;
+  --kimi: #4f57b8; --kimi-bg: #e8e9f8;
+  --glm: #17756f;  --glm-bg: #dceeeb;
+  --radius: 5px;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --sw: 264px;
+  --iw: 336px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111318; --surface: #191c22; --surface-2: #222630; --border: #333846;
+    --border-strong: #4a5160; --text: #e6e8ec; --muted: #98a0ad;
+    --accent: #e9ecf2; --accent-ink: #12141a;
+    --work: #d9a441; --done: #77bd8c; --err: #e08a83;
+    --gpt: #78b6e0;  --gpt-bg: #1b2a36;
+    --kimi: #9aa2f0; --kimi-bg: #212439;
+    --glm: #6cc4b8;  --glm-bg: #14302d;
+  }
+}
+/* An explicit choice wins over the system preference in BOTH directions. */
+:root[data-theme="light"] {
+  --bg: #f5f6f8; --surface: #ffffff; --surface-2: #eceef2; --border: #d5d9e0;
+  --border-strong: #b7bec9; --text: #14171c; --muted: #5c626c;
+  --accent: #1b1f27; --accent-ink: #ffffff;
+  --work: #9a6410; --done: #2f6d43; --err: #a8322c;
+  --gpt: #1d6fa5; --gpt-bg: #e4eef6; --kimi: #4f57b8; --kimi-bg: #e8e9f8;
+  --glm: #17756f; --glm-bg: #dceeeb;
+}
+:root[data-theme="dark"] {
+  --bg: #111318; --surface: #191c22; --surface-2: #222630; --border: #333846;
+  --border-strong: #4a5160; --text: #e6e8ec; --muted: #98a0ad;
+  --accent: #e9ecf2; --accent-ink: #12141a;
+  --work: #d9a441; --done: #77bd8c; --err: #e08a83;
+  --gpt: #78b6e0; --gpt-bg: #1b2a36; --kimi: #9aa2f0; --kimi-bg: #212439;
+  --glm: #6cc4b8; --glm-bg: #14302d;
+}
+
+* { box-sizing: border-box; }
+html, body { overflow-x: clip; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.5 var(--sans); -webkit-text-size-adjust: 100%;
+}
+h1, h2, h3, h4 { margin: 0; overflow-wrap: anywhere; min-width: 0; }
+h1 { font-size: 15px; letter-spacing: .01em; }
+h2 { font: 600 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+h3 { font-size: 13.5px; }
+p { margin: 0 0 .6em; }
+a { color: var(--accent); }
+[hidden] { display: none !important; }
+.num, .mono { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--mono); }
+
+/* ---------------------------------------------------------------- controls */
+button, select, textarea, input {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 8px;
+  min-width: 0; max-width: 100%;
+}
+textarea { width: 100%; resize: vertical; overflow-wrap: anywhere; }
+button { cursor: pointer; transition: background-color .12s ease, border-color .12s ease; }
+button:hover:not(:disabled) { background: var(--surface-2); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.primary:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); opacity: .88; }
+button.mini { font: 11.5px/1.4 var(--sans); padding: 2px 6px; color: var(--muted); }
+button.link { border: 0; background: none; padding: 2px 4px; color: var(--muted); font-size: 11.5px; }
+button.link:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+label { font-size: 12.5px; color: var(--muted); }
+label.strong { color: var(--text); font-size: 13px; }
+input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.seg { display: inline-flex; }
+.seg button { border-radius: 0; margin-left: -1px; font-size: 11.5px; padding: 4px 7px; }
+.seg button:first-child { border-radius: var(--radius) 0 0 var(--radius); margin-left: 0; }
+.seg button:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row.tight { gap: 6px; }
+.grow { flex: 1 1 160px; min-width: 0; }
+.hint { color: var(--muted); font-size: 12px; }
+.stack > * + * { margin-top: 8px; }
+
+/* ------------------------------------------------------------------ shell */
+.app { display: flex; flex-direction: column; height: 100%; }
+.topbar {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 7px 12px; background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.topbar .title-block { flex: 1 1 220px; min-width: 0; }
+.topbar .sub { margin: 0; color: var(--muted); font-size: 11.5px; overflow-wrap: anywhere; }
+.topbar-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fakechip {
+  font: 600 11px/1.4 var(--mono); letter-spacing: .06em; color: var(--work);
+  border: 1px solid var(--work); border-radius: var(--radius); padding: 3px 7px;
+}
+.flash { padding: 0 12px; }
+.flash p { margin: 6px 0 0; font: 12px/1.45 var(--sans); color: var(--muted); overflow-wrap: anywhere; }
+.flash p[data-kind="error"] { color: var(--err); }
+
+/* FLEX, not a fixed multi-track grid. A hidden pane is display:none, and under
+   grid the surviving items are auto-placed into the FIRST tracks — which put
+   the transcript in a 0-width column in every no-sidebar state (measured in a
+   browser 2026-09-02: main 0px). In a flex row a hidden pane simply leaves and
+   .main takes what is left. Panes may shrink (0 1 basis); .main may not go
+   under its floor, so dragging both panes wide steals from the panes, never
+   from the evidence. */
+.shell { display: flex; flex: 1 1 auto; min-height: 0; }
+.sidebar { flex: 0 1 var(--sw); width: var(--sw); }
+.info { flex: 0 1 var(--iw); width: var(--iw); }
+.resizer { flex: 0 0 6px; }
+.app.no-sidebar .sidebar, .app.no-sidebar #resizeSidebar { display: none; }
+.app.no-info .info, .app.no-info #resizeInfo { display: none; }
+
+.resizer { background: var(--border); cursor: col-resize; }
+.resizer:hover, .resizer:focus-visible { background: var(--border-strong); }
+
+.sidebar, .info {
+  background: var(--surface); min-width: 0; overflow-y: auto; overflow-x: hidden;
+  padding: 10px 11px 24px;
+}
+.sidebar { border-right: 1px solid var(--border); }
+.info { border-left: 1px solid var(--border); }
+.pane-head { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+
+.main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: min(320px, 100%); min-height: 0; }
+.scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 16px 26px; }
+.lawline {
+  margin: 0; padding: 6px 16px 8px; color: var(--muted); font-size: 11.5px;
+  border-top: 1px solid var(--border); background: var(--surface); overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  /* fixed = out of the flex row entirely, so .main keeps the full width */
+  .info { position: fixed; top: 0; right: 0; bottom: 0; width: min(360px, 94vw); z-index: 40; }
+  #resizeInfo { display: none; }
+}
+@media (max-width: 700px) {
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: min(304px, 94vw); z-index: 41; border-right: 1px solid var(--border); }
+  #resizeSidebar { display: none; }
+  .scroll { padding: 0 11px 22px; }
+}
+
+/* --------------------------------------------------------------- sidebar */
+.search { width: 100%; margin-bottom: 6px; }
+.slist { list-style: none; margin: 0; padding: 0; }
+.slist li { border-top: 1px solid var(--border); }
+.slist li:first-child { border-top: 0; }
+.srow { padding: 6px 4px; border-radius: var(--radius); }
+.srow[data-current="1"] { background: var(--surface-2); }
+.srow .title { display: block; width: 100%; text-align: left; border: 0; background: none; padding: 2px 2px; font-size: 13px; overflow-wrap: anywhere; }
+.srow .title:hover { background: var(--surface-2); }
+.srow .meta { display: block; color: var(--muted); font: 11px/1.4 var(--mono); font-variant-numeric: tabular-nums; padding: 0 2px; overflow-wrap: anywhere; }
+.srow .acts { display: none; gap: 2px; flex-wrap: wrap; margin-top: 2px; }
+.srow:hover .acts, .srow:focus-within .acts { display: flex; }
+.newbtn { width: 100%; text-align: left; margin-bottom: 8px; }
+.pin { color: var(--muted); font: 11px/1 var(--mono); }
+
+/* -------------------------------------------------------------- transcript */
+.round { padding-bottom: 10px; }
+.round-head {
+  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  padding: 12px 0 8px; border-bottom: 1px solid var(--border-strong);
+}
+.round-head .rnum { font: 600 11px/1.4 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.round-tools { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 0; }
+
+.msg { padding: 11px 0; border-top: 1px solid var(--border); min-width: 0; }
+.msg:first-child { border-top: 0; }
+.msg[data-superseded="1"] { opacity: .72; }
+.msg-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.who { font-weight: 650; }
+.chip {
+  font: 600 10.5px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  padding: 1px 5px; border-radius: 3px; background: var(--surface-2); color: var(--muted);
+}
+.chip.seat { background: var(--seat-bg, var(--surface-2)); color: var(--seat-fg, var(--muted)); }
+[data-seat="gpt"] { --seat-fg: var(--gpt); --seat-bg: var(--gpt-bg); }
+[data-seat="kimi"] { --seat-fg: var(--kimi); --seat-bg: var(--kimi-bg); }
+[data-seat="glm"] { --seat-fg: var(--glm); --seat-bg: var(--glm-bg); }
+.chip.sup { border: 1px solid var(--border-strong); background: none; }
+.meta { color: var(--muted); font: 11.5px/1.5 var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+
+.st {
+  font: 11px/1.5 var(--mono); letter-spacing: .06em; text-transform: uppercase;
+  font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap;
+}
+.st[data-s="working"] { color: var(--work); }
+.st[data-s="done"] { color: var(--done); }
+.st[data-s="error"], .st[data-s="timed_out"], .st[data-s="cancelled"] { color: var(--err); }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; margin-right: 5px; }
+.st[data-s="working"] .dot { animation: pulse 1.15s ease-in-out infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .2; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+.msg.fresh { animation: fade .18s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .st[data-s="working"] .dot { animation: none; }
+  .msg.fresh { animation: none; }
+  button { transition: none; }
+}
+
+.msg-actions { display: none; gap: 2px; flex-wrap: wrap; margin-left: auto; }
+.msg:hover .msg-actions, .msg:focus-within .msg-actions { display: flex; }
+@media (hover: none) { .msg-actions { display: flex; } }
+.cli { margin: 5px 0 3px; color: var(--muted); font: 11.5px/1.5 var(--mono); overflow-wrap: anywhere; }
+.errline { margin: 5px 0 0; color: var(--err); font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.body { overflow-wrap: anywhere; min-width: 0; }
+.body > *:last-child { margin-bottom: 0; }
+.body h1, .body h2, .body h3, .body h4, .body h5, .body h6 {
+  font: 600 13.5px/1.4 var(--sans); text-transform: none; letter-spacing: 0;
+  color: var(--text); margin: 11px 0 4px;
+}
+.body ul, .body ol { margin: 0 0 .6em; padding-left: 20px; }
+.body li { margin-bottom: 2px; }
+.body blockquote { margin: 0 0 .6em; padding: 2px 0 2px 10px; border-left: 2px solid var(--border); color: var(--muted); }
+.body hr { border: 0; border-top: 1px solid var(--border); margin: 10px 0; }
+.body code { font-family: var(--mono); font-size: 12px; background: var(--surface-2); padding: 0 3px; border-radius: 3px; }
+.body pre { background: var(--surface-2); padding: 8px 10px; border-radius: var(--radius); overflow-x: auto; margin: 0 0 .6em; }
+.body pre code { background: none; padding: 0; font-size: 12px; }
+.body .stub { color: var(--muted); font-style: italic; }
+.seedwrap { display: inline; }
+
+.packet { margin-top: 6px; }
+.packet > summary { cursor: pointer; color: var(--muted); font: 11.5px/1.5 var(--mono); }
+.packet pre {
+  background: var(--surface-2); border-radius: var(--radius); padding: 8px 10px; margin: 6px 0 0;
+  font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: none;
+}
+
+.syscard {
+  background: var(--surface-2); border-radius: var(--radius); padding: 7px 10px; margin: 10px 0;
+  font-size: 12.5px; overflow-wrap: anywhere;
+}
+.syscard .k { font: 600 10.5px/1.5 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-right: 7px; }
+
+.lane-group { min-width: 0; }
+.lane { min-width: 0; display: contents; }
+.lane-group.compare { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 16px; align-items: start; }
+.lane-group.compare .lane { display: block; }
+.lane-group.compare .msg:first-child { border-top: 1px solid var(--border); }
+@media (max-width: 900px) { .lane-group.compare { grid-template-columns: minmax(0, 1fr); } }
+
+.thread { margin: 10px 0 0; padding-left: 12px; }
+.thread-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; margin-bottom: 2px; }
+
+.table-wrap { overflow-x: auto; margin: 6px 0 4px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 9px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { color: var(--muted); font: 600 11px/1.4 var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+td.rank { font-family: var(--mono); }
+td.unparsed { color: var(--err); font-family: var(--mono); font-size: 12px; white-space: normal; }
+
+/* --------------------------------------------------------------- composer */
+.composer { border-top: 1px solid var(--border); background: var(--surface); padding: 8px 16px; }
+.composer textarea { min-height: 54px; }
+.composer .bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 6px; }
+.tokens { display: flex; gap: 4px; flex-wrap: wrap; }
+.seatmark { background: var(--seat-bg, var(--surface-2)); color: var(--seat-fg, var(--text)); border-radius: 3px; padding: 0 3px; font-family: var(--mono); font-size: 12px; }
+@media (max-width: 700px) { .composer { padding: 8px 11px; } }
+
+/* --------------------------------------------------------------- creation */
+.create { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 14px 16px 30px; }
+.block { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 14px; }
+.block:first-child { border-top: 0; margin-top: 0; padding-top: 0; }
+.tofield {
+  display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 7px; background: var(--surface);
+}
+.tofield .tolabel { font: 600 11px/1.5 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.tofield input { border: 0; padding: 2px; flex: 1 1 120px; background: none; }
+.tofield input:focus-visible { outline-offset: 0; }
+.tochip { display: inline-flex; gap: 5px; align-items: center; background: var(--seat-bg, var(--surface-2)); color: var(--seat-fg, var(--text)); border-radius: 3px; padding: 1px 3px 1px 6px; font: 600 11.5px/1.6 var(--mono); }
+.tochip button { border: 0; background: none; padding: 0 3px; color: inherit; font: inherit; line-height: 1; }
+.menu { margin-top: 4px; display: flex; gap: 6px; flex-wrap: wrap; }
+.mrow { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; align-items: start; padding: 7px 0; border-top: 1px dashed var(--border); }
+.mrow:first-child { border-top: 0; }
+.mrow .fields { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.field { display: flex; gap: 5px; align-items: center; }
+.field input[type="number"] { width: 92px; }
+.effcfg { background: var(--surface-2); border-radius: var(--radius); padding: 8px 10px; font: 11.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 0; }
+
+/* ------------------------------------------------------------------- info */
+.roster { list-style: none; margin: 0; padding: 0; }
+.roster li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; padding: 5px 0; border-top: 1px solid var(--border); }
+.roster li:first-child { border-top: 0; }
+.kv { display: grid; grid-template-columns: minmax(0, 108px) minmax(0, 1fr); gap: 2px 10px; font-size: 12.5px; }
+.kv dt { color: var(--muted); font: 11.5px/1.6 var(--mono); }
+.kv dd { margin: 0; overflow-wrap: anywhere; font: 11.5px/1.6 var(--mono); }
+/* filled, not bordered: a bordered card inside a bordered pane of the same
+   surface is the nesting this design forbids */
+.judgement { background: var(--surface-2); border-radius: var(--radius); padding: 9px 10px; }
+.judgement h2 { color: var(--text); }
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <header class="topbar">
+    <button id="sidebarToggle" aria-expanded="true" aria-controls="sidebar">Sessions</button>
+    <div class="title-block">
+      <h1 id="sessTitle">Roundtable</h1>
+      <p class="sub" id="sessMeta">Three seats, one question, structured rounds. The synthesis is yours.</p>
+    </div>
+    <div class="topbar-actions">
+      <div class="fakechip" id="fakeBanner" hidden>FAKE SEATS — no model was called</div>
+      <div class="seg" role="group" aria-label="Colour theme">
+        <button data-theme-set="system" aria-pressed="true">System</button>
+        <button data-theme-set="light" aria-pressed="false">Light</button>
+        <button data-theme-set="dark" aria-pressed="false">Dark</button>
+      </div>
+      <button id="infoToggle" aria-expanded="false" aria-controls="infopane">Info</button>
+    </div>
+  </header>
+  <div class="flash"><p id="flash" role="status" aria-live="polite"></p></div>
+
+  <div class="shell">
+
+    <aside class="sidebar" id="sidebar" aria-label="Sessions">
+      <div class="pane-head">
+        <h2 class="grow">Sessions</h2>
+        <button class="link" id="sessRefresh">refresh</button>
+      </div>
+      <button class="newbtn" id="newSessionBtn">+ New session</button>
+      <input class="search" id="sessSearch" type="search" placeholder="Search title, question, id" aria-label="Search sessions">
+      <ul class="slist" id="sessList"></ul>
+      <p class="hint" id="sessEmpty" hidden>No sessions yet.</p>
+      <button class="link" id="showHidden" hidden></button>
+    </aside>
+
+    <div class="resizer" id="resizeSidebar" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize the session list"></div>
+
+    <main class="main">
+
+      <section class="create" id="createPane" hidden aria-label="New session">
+        <div class="block">
+          <div class="row">
+            <h2 class="grow">New session</h2>
+            <button class="link" id="createClose" hidden>back to session</button>
+          </div>
+          <div class="row" style="margin-top:8px">
+            <label class="strong" for="cTitle">Title</label>
+            <input id="cTitle" class="grow" placeholder="optional — the server falls back to the first question">
+            <label class="strong" for="cMode">Mode</label>
+            <select id="cMode"></select>
+          </div>
+        </div>
+
+        <div class="block">
+          <h2>Members</h2>
+          <p class="hint">Pick the seats from the server allow-list. Every knob below is one the server publishes.</p>
+          <div class="tofield" id="toField">
+            <span class="tolabel">To</span>
+            <div class="tokens" id="toChips"></div>
+            <input id="toInput" placeholder="type a seat name" aria-label="Add a member seat" autocomplete="off">
+          </div>
+          <div class="menu" id="toMenu"></div>
+          <div id="memberRows"></div>
+        </div>
+
+        <div class="block" id="personaBlock" hidden>
+          <h2>Roles and charters</h2>
+          <p class="hint">Persona mode needs exactly one bull, one bear and one risk seat, on three different seats, each with a frozen charter.</p>
+          <div id="roleRows"></div>
+        </div>
+
+        <div class="block">
+          <h2>Protocol</h2>
+          <div id="protocolRows" class="stack"></div>
+        </div>
+
+        <div class="block">
+          <h2>First question (optional)</h2>
+          <textarea id="cQuestion" rows="3" placeholder="Leave empty to create the session and ask later from the composer."></textarea>
+          <details style="margin-top:6px"><summary class="hint">Context (appended to the packet, verbatim)</summary>
+            <textarea id="cContext" rows="4" style="margin-top:6px"></textarea>
+          </details>
+        </div>
+
+        <div class="block">
+          <h2>Effective configuration (read-only)</h2>
+          <p class="hint">Frozen at creation and never recomputed. The hash is assigned by the server.</p>
+          <pre class="effcfg" id="cEffective"></pre>
+          <div class="row" style="margin-top:10px">
+            <button class="primary" id="createBtn">Create session</button>
+            <span class="hint" id="createMsg"></span>
+          </div>
+        </div>
+      </section>
+
+      <div class="scroll" id="transcriptScroll">
+        <div id="transcript"></div>
+        <p class="hint" id="emptyNote">No session open. Start one from the sidebar.</p>
+      </div>
+
+      <div class="composer" id="composer">
+        <label class="hint" for="composerText" id="composerLabel">Message — a new round in this session</label>
+        <textarea id="composerText" rows="2" placeholder="Ask the seats. Use @gpt @kimi @glm to address seats."></textarea>
+        <details><summary class="hint">Context (appended to the packet, verbatim)</summary>
+          <textarea id="composerContext" rows="3" style="margin-top:6px"></textarea>
+        </details>
+        <div class="bar">
+          <label for="delivery">Delivery</label>
+          <select id="delivery">
+            <option value="parallel">Independent parallel</option>
+            <option value="relay">Tagged relay</option>
+            <option value="persona">Persona step</option>
+          </select>
+          <label for="composerTurns" id="turnsLabel" hidden>turns</label>
+          <select id="composerTurns" hidden></select>
+          <button class="primary" id="sendBtn">Send</button>
+          <button id="cancelAllBtn" disabled>Cancel session</button>
+          <span class="hint" id="composerHint"></span>
+          <span class="tokens" id="composerTokens"></span>
+        </div>
+      </div>
+
+      <p class="lawline">A roundtable session is a debate record, not a review. A model's ranking here is not a verdict; only the human synthesis is.</p>
+    </main>
+
+    <div class="resizer" id="resizeInfo" role="separator" aria-orientation="vertical" tabindex="0" aria-label="Resize the info pane"></div>
+
+    <aside class="info" id="infopane" aria-label="Session info" hidden>
+      <div class="pane-head">
+        <h2 class="grow">Info</h2>
+        <button class="link" id="infoClose">close</button>
+      </div>
+
+      <div class="block">
+        <h2>Roster</h2>
+        <ul class="roster" id="roster"></ul>
+      </div>
+
+      <div class="block">
+        <div class="judgement">
+          <h2>Human synthesis — yours, not a model's</h2>
+          <label class="strong" for="notes">Notes (autosaved)</label>
+          <textarea id="notes" rows="5" placeholder="Your synthesis. The only judgment on this page is typed here."></textarea>
+          <p class="hint num" id="notesSaved"></p>
+          <div id="decisionWrap" hidden>
+            <label class="strong" for="dStance">Decision (persona mode)</label>
+            <div class="row tight" style="margin:4px 0">
+              <select id="dStance">
+                <option value="select">select</option>
+                <option value="hold" selected>hold</option>
+                <option value="reject">reject</option>
+              </select>
+              <button id="dSave">Save decision</button>
+              <span class="hint" id="dSaved"></span>
+            </div>
+            <label for="dRationale">Rationale</label>
+            <textarea id="dRationale" rows="3"></textarea>
+            <label for="dDissent">Dissent kept on the record</label>
+            <textarea id="dDissent" rows="2"></textarea>
+          </div>
+          <p class="hint" id="decisionNote" hidden>A decision belongs to a persona session.</p>
+        </div>
+      </div>
+
+      <div class="block">
+        <h2>Effective configuration</h2>
+        <dl class="kv" id="effKv"></dl>
+      </div>
+
+      <div class="block">
+        <h2>Settings for the next session</h2>
+        <p class="hint">Prefills the creation form. Stored in this browser only.</p>
+        <div id="defaultRows" class="stack"></div>
+      </div>
+
+      <div class="block">
+        <h2>Export</h2>
+        <div class="row tight">
+          <button id="exportMd">Export markdown</button>
+          <button id="exportJson">Export JSON</button>
+        </div>
+        <p class="hint mono" id="exportPath"></p>
+      </div>
+    </aside>
+
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =======================================================================
+   Roundtable v2 page — lane A.
+   Reads /api/config and renders one session as a transcript. No external
+   request of any kind: same-origin fetch and EventSource only.
+   ======================================================================= */
+
+/* ---------------------------------------------------------------- helpers */
+const $ = (sel, root) => (root || document).querySelector(sel);
+const $$ = (sel, root) => Array.prototype.slice.call((root || document).querySelectorAll(sel));
+const ID_RE = /^[0-9a-f]{8,64}$/;
+const API_TOKEN = "__ROUNDTABLE_TOKEN__";   // replaced per process when the server serves this file
+
+function el(tag, cls, text) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  if (text != null) n.textContent = String(text);
+  return n;
+}
+function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+function on(node, type, fn) { node.addEventListener(type, fn); return node; }
+function btn(label, cls, fn, title) {
+  const b = el("button", cls || "link", label);
+  if (title) b.setAttribute("title", title);
+  on(b, "click", fn);
+  return b;
+}
+function store(key, value) {
+  try {
+    if (value === undefined) {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : null;
+    }
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (e) { /* private mode, quota, disabled storage — never fatal */ }
+  return null;
+}
+function pad2(n) { return (n < 10 ? "0" : "") + n; }
+function mmss(seconds) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return (h ? h + ":" + pad2(m) : pad2(m)) + ":" + pad2(s % 60);
+}
+function fmtElapsed(seconds) {
+  const s = Number(seconds) || 0;
+  return s < 60 ? s.toFixed(1) + "s" : mmss(s);
+}
+function clockOf(iso) {
+  const t = String(iso || "");
+  const m = t.match(/T(\d{2}:\d{2}:\d{2})/);
+  return m ? m[1] : t.slice(0, 19).replace("T", " ");
+}
+function flash(text, kind) {
+  const node = $("#flash");
+  node.textContent = text || "";
+  node.dataset.kind = kind || "note";
+}
+function errText(err) { return String((err && err.message) || err || "failed"); }
+
+/* -------------------------------------------------------------------- api */
+async function api(path, body) {
+  const opts = body === undefined
+    ? { headers: { "X-Roundtable": API_TOKEN } }
+    : { method: "POST",
+        headers: { "Content-Type": "application/json", "X-Roundtable": API_TOKEN },
+        body: JSON.stringify(body) };
+  const res = await fetch(path, opts);
+  const text = await res.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = null; }
+  if (!res.ok) throw new Error((data && (data.error || data.field)) || ("HTTP " + res.status));
+  return data;
+}
+
+/* ------------------------------------------------- markdown (hand-rolled) */
+/* Model text is untrusted: it is HTML-escaped FIRST, then the escaped string
+   is marked up. Links become visible text plus their target in parentheses —
+   never an anchor, so nothing on this page is clickable out of model text. */
+function esc(t) {
+  return String(t == null ? "" : t)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function inlineMd(escaped) {
+  const codes = [];
+  let out = escaped.replace(/`([^`]+)`/g, (m, c) => { codes.push(c); return "\u0000C" + (codes.length - 1) + "\u0000"; });
+  out = out.replace(/!?\[([^\]\n]*)\]\(([^)\s]*)\)/g, (m, label, target) => {
+    const shown = label || target || "link";
+    return target ? shown + " (" + target + ")" : shown;
+  });
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/(^|[^*\w])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+  out = out.replace(/\u0000C(\d+)\u0000/g, (m, i) => "<code>" + codes[Number(i)] + "</code>");
+  return out;
+}
+function renderMd(raw) {
+  const lines = String(raw == null ? "" : raw).replace(/\u0000/g, "").replace(/\r\n?/g, "\n").split("\n");
+  const out = []; let para = []; let list = null; let i = 0;
+  const flushPara = () => { if (para.length) { out.push("<p>" + inlineMd(esc(para.join(" "))) + "</p>"); para = []; } };
+  const flushList = () => { if (list) { out.push("</" + list + ">"); list = null; } };
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      flushPara(); flushList(); const buf = []; i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) { buf.push(lines[i]); i++; }
+      i++; out.push("<pre><code>" + esc(buf.join("\n")) + "</code></pre>"); continue;
+    }
+    if (/^\s*$/.test(line)) { flushPara(); flushList(); i++; continue; }
+    if (/^ {0,3}(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flushPara(); flushList(); out.push("<hr>"); i++; continue; }
+    let m = line.match(/^ {0,3}(#{1,6})\s+(.*)$/);
+    if (m) {
+      flushPara(); flushList();
+      const lv = m[1].length;
+      out.push("<h" + lv + ">" + inlineMd(esc(m[2].trim())) + "</h" + lv + ">"); i++; continue;
+    }
+    if (/^ {0,3}>/.test(line)) {
+      flushPara(); flushList(); const buf = [];
+      while (i < lines.length && /^ {0,3}>/.test(lines[i])) { buf.push(lines[i].replace(/^ {0,3}>\s?/, "")); i++; }
+      out.push("<blockquote>" + renderMd(buf.join("\n")) + "</blockquote>"); continue;
+    }
+    m = line.match(/^ {0,3}([-*+])\s+(.*)$/);
+    if (m) {
+      flushPara();
+      if (list !== "ul") { flushList(); out.push("<ul>"); list = "ul"; }
+      out.push("<li>" + inlineMd(esc(m[2])) + "</li>"); i++; continue;
+    }
+    m = line.match(/^ {0,3}\d+[.)]\s+(.*)$/);
+    if (m) {
+      flushPara();
+      if (list !== "ol") { flushList(); out.push("<ol>"); list = "ol"; }
+      out.push("<li>" + inlineMd(esc(m[1])) + "</li>"); i++; continue;
+    }
+    flushList(); para.push(line.trim()); i++;
+  }
+  flushPara(); flushList();
+  return out.join("\n");
+}
+function paintMd(node, raw, stub) {
+  clear(node);
+  if (!raw || !String(raw).trim()) { node.appendChild(el("p", "stub", stub || "empty — the seat returned no text")); return; }
+  node.innerHTML = renderMd(raw);          /* the ONLY innerHTML write on this page */
+}
+function bodyNode(raw, stub) {
+  const n = el("div", "body");
+  paintMd(n, raw, stub);
+  return n;
+}
+
+/* ------------------------------------------------------------------ state */
+const S = {
+  config: null,
+  session: null,
+  sid: null,                 /* the only session async writes may touch */
+  stream: null,
+  live: new Map(),           /* key -> {kind, round, seat, tier, run_id, start, status, node} */
+  seen: new Set(),           /* message keys already faded in */
+  open: new Set(),           /* packet disclosures the user opened */
+  compare: new Set(),        /* round indexes shown side by side */
+  relay: null,               /* {round, order, turns, prompt, seededFrom} */
+  seed: new Map(),           /* relay run_id -> where its prompt came from */
+  notices: [],               /* {round, text} — this browser only */
+  create: null,
+  rows: store("rt2.rows") || { pinned: [], hidden: [], alias: {} },
+  defaults: store("rt2.defaults") || null,
+  sessions: [],
+  showHidden: false,
+  gen: 0,                    /* rises on every session open; see stamp()/guard() */
+  refreshTimer: 0,
+  notesTimer: 0
+};
+/* Every async write, every stream and every timer carries the (session,
+   generation) it started under. `gen` rises on EVERY open — including a reopen
+   of the SAME id — so a completion from the previous open of that id is
+   dropped too, which a sid-only guard let through. */
+function stamp() { return { sid: S.sid, gen: S.gen }; }
+function guard(t) { return !!t && typeof t === "object" && t.sid === S.sid && t.gen === S.gen; }
+function seatLabel(seat) {
+  const info = S.config && S.config.seats && S.config.seats[seat];
+  return (info && info.label) || seat;
+}
+function memberSeats() { return S.session ? Object.keys(S.session.members) : []; }
+function answeredSeats(rnd) {
+  if (!S.session || !rnd) return [];
+  return memberSeats().filter(s => (rnd.stage1[s] || {}).text);
+}
+function worstStatus(list) {
+  const bad = ["cancelled", "timed_out", "error"];
+  for (let i = 0; i < bad.length; i++) if (list.indexOf(bad[i]) >= 0) return bad[i];
+  return list.length ? "done" : "error";
+}
+function anyLive() { return S.live.size > 0; }
+
+/* ------------------------------------------------------------------ theme */
+function setTheme(mode) {
+  if (mode === "system") { delete document.documentElement.dataset.theme; }
+  else { document.documentElement.dataset.theme = mode; }
+  $$("[data-theme-set]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.themeSet === mode)));
+  store("rt2.theme", mode);
+}
+$$("[data-theme-set]").forEach(b => on(b, "click", () => setTheme(b.dataset.themeSet)));
+(function restoreTheme() {
+  const mode = store("rt2.theme");
+  setTheme(["system", "light", "dark"].indexOf(mode) >= 0 ? mode : "system");
+})();
+
+/* ----------------------------------------------------------------- layout */
+const layout = Object.assign({ sw: 264, iw: 336, sidebar: true, info: false }, store("rt2.layout") || {});
+function applyLayout() {
+  document.documentElement.style.setProperty("--sw", layout.sw + "px");
+  document.documentElement.style.setProperty("--iw", layout.iw + "px");
+  const app = $("#app");
+  app.classList.toggle("no-sidebar", !layout.sidebar);
+  app.classList.toggle("no-info", !layout.info);
+  $("#sidebarToggle").setAttribute("aria-expanded", String(!!layout.sidebar));
+  $("#infoToggle").setAttribute("aria-expanded", String(!!layout.info));
+  $("#infopane").hidden = !layout.info;
+  store("rt2.layout", layout);
+}
+on($("#sidebarToggle"), "click", () => { layout.sidebar = !layout.sidebar; applyLayout(); });
+on($("#infoToggle"), "click", () => { layout.info = !layout.info; applyLayout(); });
+on($("#infoClose"), "click", () => { layout.info = false; applyLayout(); });
+function wireResizer(node, key, min, max, sign) {
+  let dragging = false;
+  on(node, "pointerdown", ev => {
+    dragging = true;
+    if (node.setPointerCapture && ev.pointerId != null) node.setPointerCapture(ev.pointerId);
+    ev.preventDefault();
+  });
+  on(node, "pointermove", ev => {
+    if (!dragging) return;
+    const width = sign > 0 ? ev.clientX : (window.innerWidth - ev.clientX);
+    layout[key] = Math.max(min, Math.min(max, Math.round(width)));
+    applyLayout();
+  });
+  const stop = () => { dragging = false; };
+  on(node, "pointerup", stop); on(node, "pointercancel", stop);
+  on(node, "keydown", ev => {
+    const step = ev.key === "ArrowLeft" ? -16 : ev.key === "ArrowRight" ? 16 : 0;
+    if (!step) return;
+    ev.preventDefault();
+    layout[key] = Math.max(min, Math.min(max, layout[key] + step * sign));
+    applyLayout();
+  });
+}
+wireResizer($("#resizeSidebar"), "sw", 180, 520, 1);
+wireResizer($("#resizeInfo"), "iw", 240, 620, -1);
+applyLayout();
+
+/* ================================================================ SIDEBAR */
+function rowsSave() { store("rt2.rows", S.rows); }
+function aliasOf(row) { return S.rows.alias[row.id] || row.title || row.question || "(untitled)"; }
+async function loadSessions() {
+  try { S.sessions = await api("/api/sessions"); } catch (e) { flash("session list: " + errText(e), "error"); return; }
+  renderSessions();
+}
+function renderSessions() {
+  const host = $("#sessList");
+  clear(host);
+  const q = ($("#sessSearch").value || "").trim().toLowerCase();
+  const hiddenCount = S.sessions.filter(r => S.rows.hidden.indexOf(r.id) >= 0).length;
+  let rows = S.sessions.filter(r => S.showHidden || S.rows.hidden.indexOf(r.id) < 0);
+  if (q) {
+    rows = rows.filter(r => (aliasOf(r) + " " + (r.question || "") + " " + r.id + " " + r.mode).toLowerCase().indexOf(q) >= 0);
+  }
+  rows.sort((a, b) => {
+    const pa = S.rows.pinned.indexOf(a.id) >= 0 ? 0 : 1;
+    const pb = S.rows.pinned.indexOf(b.id) >= 0 ? 0 : 1;
+    if (pa !== pb) return pa - pb;
+    return a.created < b.created ? 1 : -1;
+  });
+  $("#sessEmpty").hidden = rows.length > 0;
+  rows.forEach(row => {
+    const li = el("li");
+    const box = el("div", "srow");
+    if (row.id === S.sid) box.dataset.current = "1";
+    const pinned = S.rows.pinned.indexOf(row.id) >= 0;
+    const title = el("button", "title");
+    if (pinned) title.appendChild(el("span", "pin", "[pin] "));
+    title.appendChild(document.createTextNode(aliasOf(row)));
+    on(title, "click", () => openSession(row.id));
+    const meta = el("span", "meta", clockOf(row.created) + " · " + row.mode + " · " +
+      row.rounds + (row.rounds === 1 ? " round" : " rounds") + (row.fake ? " · fake" : ""));
+    const acts = el("div", "acts");
+    acts.appendChild(btn(pinned ? "unpin" : "pin", "link", () => {
+      const at = S.rows.pinned.indexOf(row.id);
+      if (at >= 0) S.rows.pinned.splice(at, 1); else S.rows.pinned.push(row.id);
+      rowsSave(); renderSessions();
+    }));
+    acts.appendChild(btn("label", "link", () => startRename(box, row)));
+    acts.appendChild(btn("copy link", "link", () => {
+      copyText(location.origin + "/?session=" + row.id, m => flash(m + " — " + location.origin + "/?session=" + row.id));
+    }));
+    acts.appendChild(btn(S.rows.hidden.indexOf(row.id) >= 0 ? "unhide" : "hide", "link", () => {
+      const at = S.rows.hidden.indexOf(row.id);
+      if (at >= 0) S.rows.hidden.splice(at, 1); else S.rows.hidden.push(row.id);
+      rowsSave(); renderSessions();
+    }));
+    box.appendChild(title); box.appendChild(meta); box.appendChild(acts);
+    li.appendChild(box);
+    host.appendChild(li);
+  });
+  const show = $("#showHidden");
+  show.hidden = hiddenCount === 0;
+  show.textContent = S.showHidden ? "hide hidden (" + hiddenCount + ")" : "show hidden (" + hiddenCount + ")";
+}
+function startRename(box, row) {
+  const input = el("input");
+  input.value = aliasOf(row);
+  input.setAttribute("aria-label", "Local label for this session");
+  const done = save => {
+    if (save) {
+      const v = input.value.trim();
+      if (v) S.rows.alias[row.id] = v; else delete S.rows.alias[row.id];
+      rowsSave();
+    }
+    renderSessions();
+  };
+  on(input, "keydown", ev => {
+    if (ev.key === "Enter") { ev.preventDefault(); done(true); }
+    if (ev.key === "Escape") { ev.preventDefault(); done(false); }
+  });
+  on(input, "blur", () => done(true));
+  clear(box);
+  box.appendChild(input);
+  box.appendChild(el("span", "meta", "local label only — the session file keeps its own title"));
+  input.focus();
+}
+on($("#sessSearch"), "input", renderSessions);
+on($("#sessRefresh"), "click", loadSessions);
+on($("#showHidden"), "click", () => { S.showHidden = !S.showHidden; renderSessions(); });
+
+/* ======================================================= CREATION SURFACE */
+function defaultProtocol() {
+  const d = (S.config && S.config.protocol_defaults) || {};
+  return {
+    reader_seat: d.reader_seat || "glm",
+    reader_tier: d.reader_tier || "high",
+    anonymize: { review: !!(d.anonymize || {}).review, disagreements: !!(d.anonymize || {}).disagreements },
+    bounds: Object.assign({}, d.bounds || {}),
+    stop_on_error: d.stop_on_error !== false,
+    live_log: d.live_log !== false
+  };
+}
+function freshCreate() {
+  const seats = Object.keys(S.config.seats);
+  const members = {};
+  seats.forEach(seat => {
+    members[seat] = { tier: S.config.seats[seat].default_tier, effort: null, max_tokens: null, timeout_s: null };
+  });
+  const c = {
+    title: "", mode: "roundtable", order: seats.slice(), members: members,
+    roles: { bull: { seat: seats[0] || "", charter: "" },
+             bear: { seat: seats[1] || "", charter: "" },
+             risk: { seat: seats[2] || "", charter: "" } },
+    protocol: defaultProtocol(), question: "", context: ""
+  };
+  if (S.defaults) {
+    if (S.defaults.protocol) c.protocol = Object.assign(c.protocol, JSON.parse(JSON.stringify(S.defaults.protocol)));
+    if (S.defaults.mode) c.mode = S.defaults.mode;
+    if (S.defaults.members) {
+      Object.keys(S.defaults.members).forEach(seat => {
+        if (c.members[seat]) c.members[seat] = Object.assign(c.members[seat], S.defaults.members[seat]);
+      });
+    }
+    if (Array.isArray(S.defaults.order)) {
+      const kept = S.defaults.order.filter(s => c.members[s]);
+      if (kept.length) c.order = kept;
+    }
+  }
+  return c;
+}
+function openCreate() {
+  S.create = freshCreate();
+  $("#cTitle").value = S.create.title;
+  $("#cQuestion").value = "";
+  $("#cContext").value = "";
+  $("#createMsg").textContent = "";
+  const mode = $("#cMode");
+  clear(mode);
+  (S.config.modes || ["roundtable"]).forEach(m => {
+    const o = el("option", null, m); o.value = m;
+    if (m === S.create.mode) o.selected = true;
+    mode.appendChild(o);
+  });
+  $("#createPane").hidden = false;
+  $("#transcriptScroll").hidden = true;
+  $("#composer").hidden = true;
+  $("#createClose").hidden = !S.session;
+  renderCreate();
+  $("#cTitle").focus();
+}
+function closeCreate() {
+  $("#createPane").hidden = true;
+  $("#transcriptScroll").hidden = false;
+  $("#composer").hidden = false;
+}
+on($("#newSessionBtn"), "click", openCreate);
+on($("#createClose"), "click", closeCreate);
+on($("#cTitle"), "input", () => { S.create.title = $("#cTitle").value; renderEffective(); });
+on($("#cQuestion"), "input", () => { S.create.question = $("#cQuestion").value; });
+on($("#cContext"), "input", () => { S.create.context = $("#cContext").value; });
+on($("#cMode"), "change", () => { S.create.mode = $("#cMode").value; renderCreate(); });
+
+function renderCreate() {
+  renderToField();
+  renderMemberRows();
+  renderRoleRows();
+  renderProtocolRows($("#protocolRows"), S.create.protocol, () => renderEffective());
+  $("#personaBlock").hidden = S.create.mode !== "persona";
+  renderEffective();
+}
+function renderToField() {
+  const chips = $("#toChips");
+  clear(chips);
+  S.create.order.forEach(seat => {
+    const chip = el("span", "tochip");
+    chip.dataset.seat = seat;
+    chip.appendChild(document.createTextNode(seatLabel(seat)));
+    chip.appendChild(btn("×", null, () => {
+      S.create.order = S.create.order.filter(s => s !== seat);
+      renderCreate();
+    }, "remove " + seatLabel(seat)));
+    chips.appendChild(chip);
+  });
+  renderToMenu("");
+}
+function renderToMenu(filter) {
+  const menu = $("#toMenu");
+  clear(menu);
+  const q = (filter || "").trim().toLowerCase();
+  Object.keys(S.config.seats)
+    .filter(s => S.create.order.indexOf(s) < 0)
+    .filter(s => !q || (s + " " + seatLabel(s)).toLowerCase().indexOf(q) >= 0)
+    .forEach(seat => {
+      menu.appendChild(btn("+ " + seatLabel(seat), "mini", () => addMember(seat)));
+    });
+  menu.hidden = menu.firstChild == null;
+}
+function addMember(seat) {
+  if (S.create.order.indexOf(seat) < 0) S.create.order.push(seat);
+  $("#toInput").value = "";
+  renderCreate();
+  $("#toInput").focus();
+}
+on($("#toInput"), "input", () => renderToMenu($("#toInput").value));
+on($("#toInput"), "keydown", ev => {
+  const value = $("#toInput").value;
+  if (ev.key === "Enter") {
+    ev.preventDefault();
+    const q = value.trim().toLowerCase();
+    const hit = Object.keys(S.config.seats).filter(s => S.create.order.indexOf(s) < 0)
+      .filter(s => !q || (s + " " + seatLabel(s)).toLowerCase().indexOf(q) >= 0)[0];
+    if (hit) addMember(hit); else flash("no seat matches " + JSON.stringify(value), "error");
+  } else if (ev.key === "Backspace" && !value && S.create.order.length) {
+    S.create.order.pop();
+    renderCreate();
+  }
+});
+function numberField(labelText, value, min, max, placeholder, onChange) {
+  const wrap = el("label", "field");
+  wrap.appendChild(document.createTextNode(labelText));
+  const input = el("input");
+  input.type = "number";
+  input.min = String(min); input.max = String(max);
+  if (placeholder) input.placeholder = placeholder;
+  input.value = value == null ? "" : String(value);
+  on(input, "input", () => onChange(input.value === "" ? null : Number(input.value)));
+  wrap.appendChild(input);
+  return wrap;
+}
+function selectField(labelText, values, value, onChange, allowNull, nullLabel) {
+  const wrap = el("label", "field");
+  wrap.appendChild(document.createTextNode(labelText));
+  const sel = el("select");
+  if (allowNull) { const o = el("option", null, nullLabel || "(server default)"); o.value = ""; sel.appendChild(o); }
+  values.forEach(v => {
+    const o = el("option", null, String(v)); o.value = String(v);
+    sel.appendChild(o);
+  });
+  sel.value = value == null ? "" : String(value);
+  on(sel, "change", () => onChange(sel.value === "" ? null : sel.value));
+  wrap.appendChild(sel);
+  return wrap;
+}
+function renderMemberRows() {
+  const host = $("#memberRows");
+  clear(host);
+  if (!S.create.order.length) { host.appendChild(el("p", "hint", "No seats chosen — the server needs at least one.")); return; }
+  S.create.order.forEach(seat => {
+    const info = S.config.seats[seat];
+    const m = S.create.members[seat];
+    const row = el("div", "mrow");
+    row.dataset.seat = seat;
+    const name = el("div");
+    const chip = el("span", "chip seat", seatLabel(seat));
+    chip.dataset.seat = seat;
+    name.appendChild(chip);
+    const fields = el("div", "fields");
+    fields.appendChild(selectField("tier", Object.keys(info.tiers), m.tier, v => {
+      m.tier = v || info.default_tier;
+      renderMemberRows(); renderProtocolRows($("#protocolRows"), S.create.protocol, renderEffective); renderEffective();
+    }));
+    const tierNote = (info.tiers[m.tier] || {}).note || "";
+    const tierTimeout = (info.tiers[m.tier] || {}).timeout_default;
+    const knobs = info.knobs || {};
+    if (knobs.effort) {
+      fields.appendChild(selectField("effort", knobs.effort.values, m.effort, v => { m.effort = v; renderEffective(); }, true, "(unset)"));
+    }
+    if (knobs.max_tokens) {
+      fields.appendChild(numberField("max tokens", m.max_tokens, knobs.max_tokens.min, knobs.max_tokens.max,
+        "per-stage default", v => { m.max_tokens = v; renderEffective(); }));
+    }
+    const range = (S.config.ranges && S.config.ranges.timeout_s) || [60, 3600];
+    fields.appendChild(numberField("timeout s", m.timeout_s, range[0], range[1], String(tierTimeout || ""),
+      v => { m.timeout_s = v; renderEffective(); }));
+    fields.appendChild(el("span", "hint", tierNote + (tierTimeout ? " · default timeout " + tierTimeout + "s" : "")));
+    row.appendChild(name); row.appendChild(fields);
+    host.appendChild(row);
+  });
+}
+function renderRoleRows() {
+  const host = $("#roleRows");
+  clear(host);
+  if (S.create.mode !== "persona") return;
+  (S.config.roles || []).forEach(role => {
+    const slot = S.create.roles[role] || (S.create.roles[role] = { seat: "", charter: "" });
+    const row = el("div", "mrow");
+    const name = el("div");
+    name.appendChild(el("span", "chip", role));
+    const fields = el("div", "fields grow");
+    fields.appendChild(selectField("seat", S.create.order, slot.seat, v => { slot.seat = v || ""; renderEffective(); }, true, "(choose)"));
+    const ta = el("textarea");
+    ta.rows = 2;
+    ta.value = slot.charter;
+    ta.placeholder = "charter for the " + role + " seat — frozen at creation, required";
+    ta.setAttribute("aria-label", role + " charter");
+    on(ta, "input", () => { slot.charter = ta.value; renderEffective(); });
+    const taWrap = el("div", "grow");
+    taWrap.appendChild(ta);
+    row.appendChild(name);
+    const stack = el("div", "grow");
+    stack.appendChild(fields);
+    stack.appendChild(taWrap);
+    row.appendChild(stack);
+    host.appendChild(row);
+  });
+}
+function renderProtocolRows(host, protocol, onChange) {
+  clear(host);
+  const seats = S.create ? S.create.order : Object.keys(S.config.seats);
+  const r1 = el("div", "row tight");
+  r1.appendChild(selectField("reader seat", seats, protocol.reader_seat, v => {
+    protocol.reader_seat = v || seats[0];
+    const tiers = Object.keys(S.config.seats[protocol.reader_seat].tiers);
+    if (tiers.indexOf(protocol.reader_tier) < 0) protocol.reader_tier = tiers[0];
+    renderProtocolRows(host, protocol, onChange); onChange();
+  }));
+  const readerTiers = S.config.seats[protocol.reader_seat] ? Object.keys(S.config.seats[protocol.reader_seat].tiers) : [];
+  r1.appendChild(selectField("reader tier", readerTiers, protocol.reader_tier, v => { protocol.reader_tier = v || readerTiers[0]; onChange(); }));
+  host.appendChild(r1);
+
+  const r2 = el("div", "row tight");
+  [["review", "anonymize review"], ["disagreements", "anonymize disagreements"]].forEach(pair => {
+    const lab = el("label", "field");
+    const box = el("input"); box.type = "checkbox"; box.checked = !!protocol.anonymize[pair[0]];
+    on(box, "change", () => { protocol.anonymize[pair[0]] = box.checked; onChange(); });
+    lab.appendChild(box); lab.appendChild(document.createTextNode(pair[1]));
+    r2.appendChild(lab);
+  });
+  [["stop_on_error", "stop on error"], ["live_log", "live-log tee"]].forEach(pair => {
+    const lab = el("label", "field");
+    const box = el("input"); box.type = "checkbox"; box.checked = !!protocol[pair[0]];
+    on(box, "change", () => { protocol[pair[0]] = box.checked; onChange(); });
+    lab.appendChild(box); lab.appendChild(document.createTextNode(pair[1]));
+    r2.appendChild(lab);
+  });
+  host.appendChild(r2);
+
+  const r3 = el("div", "row tight");
+  const bounds = (S.config.ranges && S.config.ranges.bounds) || {};
+  Object.keys(bounds).forEach(key => {
+    r3.appendChild(numberField("bound " + key, protocol.bounds[key], bounds[key][0], bounds[key][1], "",
+      v => { protocol.bounds[key] = v; onChange(); }));
+  });
+  host.appendChild(r3);
+}
+function createBody() {
+  const c = S.create;
+  const members = {};
+  c.order.forEach(seat => {
+    const m = c.members[seat];
+    const spec = { tier: m.tier };
+    if (m.effort) spec.effort = m.effort;
+    if (m.max_tokens != null) spec.max_tokens = Number(m.max_tokens);
+    if (m.timeout_s != null) spec.timeout_s = Number(m.timeout_s);
+    members[seat] = spec;
+  });
+  if (c.mode === "persona") {
+    Object.keys(c.roles).forEach(role => {
+      const slot = c.roles[role];
+      if (slot.seat && members[slot.seat]) {
+        members[slot.seat].role = role;
+        members[slot.seat].charter = slot.charter;
+      }
+    });
+  }
+  const body = { mode: c.mode, members: members, protocol: JSON.parse(JSON.stringify(c.protocol)) };
+  if (c.title.trim()) body.title = c.title.trim();
+  return body;
+}
+function renderEffective() {
+  $("#cEffective").textContent = JSON.stringify(createBody(), null, 2);
+}
+/* Named-role validation BEFORE the POST. The server would 400 with the field,
+   but it names a SEAT (members.glm.charter); the human chose a ROLE. */
+function personaProblem() {
+  const c = S.create;
+  if (!c || c.mode !== "persona") return null;
+  if (c.order.length !== 3) {
+    return "persona mode needs exactly three seats — " + c.order.length + " chosen (" + (c.order.join(", ") || "none") + ")";
+  }
+  const taken = {};
+  const roles = S.config.roles || [];
+  for (let i = 0; i < roles.length; i++) {
+    const role = roles[i];
+    const slot = c.roles[role] || {};
+    if (!slot.seat) return role + ": choose a seat for this role";
+    if (c.order.indexOf(slot.seat) < 0) return role + ": " + seatLabel(slot.seat) + " is not one of the chosen members";
+    if (taken[slot.seat]) return role + ": " + seatLabel(slot.seat) + " is already the " + taken[slot.seat] + " seat — the three roles need three different seats";
+    taken[slot.seat] = role;
+    if (!String(slot.charter || "").trim()) return role + ": a charter is required, and it is frozen at creation";
+  }
+  return null;
+}
+on($("#createBtn"), "click", async () => {
+  const problem = personaProblem();
+  if (problem) {
+    $("#createMsg").textContent = "not created — " + problem;
+    flash("create: " + problem, "error");
+    return;
+  }
+  const body = createBody();
+  const msg = $("#createMsg");
+  msg.textContent = "creating…";
+  $("#createBtn").disabled = true;
+  try {
+    const res = await api("/api/session/new", body);
+    S.defaults = { mode: S.create.mode, order: S.create.order.slice(),
+                   members: JSON.parse(JSON.stringify(S.create.members)),
+                   protocol: JSON.parse(JSON.stringify(S.create.protocol)) };
+    store("rt2.defaults", S.defaults);
+    renderDefaults();
+    const question = S.create.question.trim();
+    const context = S.create.context;
+    msg.textContent = "created " + res.id.slice(0, 8) + " · config " + String(res.effective_config_sha256 || "").slice(0, 12);
+    closeCreate();
+    await openSession(res.id);
+    await loadSessions();
+    if (question) await sendRound(question, context);
+  } catch (e) {
+    msg.textContent = "not created — " + errText(e);
+    flash("create: " + errText(e), "error");
+  } finally {
+    $("#createBtn").disabled = false;
+  }
+});
+
+/* ============================================================== TRANSCRIPT */
+function statusNode(status, seconds) {
+  const n = el("span", "st");
+  n.dataset.s = status;
+  n.appendChild(el("span", "dot"));
+  n.appendChild(el("span", "txt", statusText(status, seconds)));
+  return n;
+}
+function statusText(status, seconds) {
+  if (status === "queued") return "QUEUED";
+  if (status === "working") return "WORKING " + mmss(seconds);
+  const t = fmtElapsed(seconds);
+  if (status === "done") return "DONE " + t;
+  if (status === "timed_out") return "TIMED OUT " + t;
+  if (status === "cancelled") return "CANCELLED " + t;
+  return "ERROR " + t;
+}
+function setStatus(node, status, seconds) {
+  node.dataset.s = status;
+  const txt = $(".txt", node);
+  if (txt) txt.textContent = statusText(status, seconds);
+}
+function copyText(text, done) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => done("copied"), () => done("copy blocked by the browser"));
+      return;
+    }
+  } catch (e) { /* fall through */ }
+  done("copy unavailable — select the text by hand");
+}
+function composerInsert(text, prefix) {
+  const box = $("#composerText");
+  const current = box.value;
+  box.value = (prefix ? prefix : "") + text + (current ? (prefix ? "\n" : " ") + current : "");
+  box.focus();
+  updateComposerTokens();
+}
+function markFresh(node, key) {
+  if (!S.seen.has(key)) { node.classList.add("fresh"); S.seen.add(key); }
+}
+/* One message. `res` is a server result record (or a live stand-in). */
+function messageNode(opts) {
+  const res = opts.result || {};
+  const key = opts.key;
+  const msg = el("article", "msg");
+  msg.dataset.seat = opts.seat || "";
+  msg.dataset.kind = opts.kind || "";
+  if (opts.superseded) msg.dataset.superseded = "1";
+  msg.dataset.key = key;
+  markFresh(msg, key);
+
+  const head = el("div", "msg-head");
+  const chip = el("span", "chip seat", seatLabel(opts.seat));
+  chip.dataset.seat = opts.seat || "";
+  head.appendChild(chip);
+  head.appendChild(el("span", "who", opts.who || seatLabel(opts.seat)));
+  const bits = [];
+  if (res.tier || opts.tier) bits.push(res.tier || opts.tier);
+  if (opts.stageLabel) bits.push(opts.stageLabel);
+  if (res.run_id) bits.push("run " + String(res.run_id).slice(0, 8));
+  if (bits.length) head.appendChild(el("span", "meta", bits.join(" · ")));
+  const st = statusNode(opts.status || res.status || "done", opts.status === "working" ? opts.liveSeconds : res.elapsed_s);
+  head.appendChild(st);
+  if (opts.live) opts.live.node = st;
+  if (opts.superseded) head.appendChild(el("span", "chip sup", "superseded"));
+  if (opts.extraChip) head.appendChild(el("span", "chip", opts.extraChip));
+
+  const acts = el("div", "msg-actions");
+  (opts.actions || []).forEach(a => acts.appendChild(btn(a[0], "link", a[1], a[2])));
+  head.appendChild(acts);
+  msg.appendChild(head);
+
+  if (opts.headerLine !== false) {
+    msg.appendChild(el("p", "cli", res.header ? res.header : "(no CLI header)"));
+  }
+  const failed = (res.status && res.status !== "done") || opts.status === "cancelled";
+  msg.appendChild(bodyNode(res.text, failed ? "no text — the call produced none" : "empty — the seat returned no text"));
+  if (res.stderr_tail && failed) msg.appendChild(el("p", "errline", String(res.stderr_tail).trim()));
+  if (res.exit_code != null && failed) msg.appendChild(el("p", "meta", "exit code " + res.exit_code + (res.timed_out ? " · timed out" : "") + (res.cancelled ? " · cancelled" : "")));
+  if (opts.packetKey) msg.appendChild(packetNode(opts.packetKey, res.packet));
+  return msg;
+}
+function packetNode(key, packet) {
+  const d = el("details", "packet");
+  d.open = S.open.has(key);
+  d.appendChild(el("summary", null, "packet — the exact prompt sent, verbatim"));
+  const pre = el("pre");
+  pre.textContent = packet ? packet : "(packet not loaded yet — it arrives with the next record refresh)";
+  d.appendChild(pre);
+  d.dataset.key = key;
+  on(d, "toggle", () => { if (d.open) S.open.add(key); else S.open.delete(key); });
+  return d;
+}
+function togglePacket(key) {
+  if (S.open.has(key)) S.open.delete(key); else S.open.add(key);
+  const node = document.querySelector('details.packet[data-key="' + key + '"]');
+  if (node) { node.open = S.open.has(key); }
+  else renderTranscript();
+}
+function seatActions(rnd, seat, res, kind, packetKey) {
+  const acts = [];
+  acts.push(["reply", () => composerInsert("@" + seat + " "), "reply addressing " + seatLabel(seat)]);
+  acts.push(["use in relay", () => openRelay(rnd.index, res.text || "", seatLabel(seat) + " answer"), "seed the relay prompt from this message"]);
+  acts.push(["quote", () => composerInsert(String(res.text || "").split("\n").map(l => "> " + l).join("\n"), ""), "quote into the composer"]);
+  acts.push(["copy", () => copyText(res.text || "", m => flash(m)), "copy the answer text"]);
+  if (packetKey) acts.push(["reveal packet", () => togglePacket(packetKey), "show the exact prompt sent"]);
+  if (kind === "stage1") acts.push(["re-run seat", () => rerunSeat(rnd.index, seat), "re-run this seat on the same stage-1 packet"]);
+  return acts;
+}
+function lanesNode(rnd) {
+  const group = el("div", "lane-group");
+  if (S.compare.has(rnd.index)) group.classList.add("compare");
+  memberSeats().forEach(seat => {
+    const lane = el("div", "lane");
+    lane.dataset.seat = seat;
+    (rnd.reruns || []).filter(r => r.seat === seat).forEach((r, i) => {
+      const key = "sup:" + rnd.index + ":" + seat + ":" + (r.result.run_id || i);
+      lane.appendChild(messageNode({
+        key: key, seat: seat, kind: "stage1", stageLabel: "stage 1", superseded: true,
+        result: r.result, packetKey: "pk:" + key,
+        actions: seatActions(rnd, seat, r.result, "superseded", "pk:" + key)
+      }));
+    });
+    const cur = rnd.stage1[seat];
+    if (cur) {
+      const key = "s1:" + rnd.index + ":" + seat + ":" + (cur.run_id || "cur");
+      lane.appendChild(messageNode({
+        key: key, seat: seat, kind: "stage1", stageLabel: "stage 1", result: cur,
+        packetKey: "pk:" + key, actions: seatActions(rnd, seat, cur, "stage1", "pk:" + key)
+      }));
+    }
+    liveFor(rnd.index, seat, ["stage1", "rerun"]).forEach(entry => lane.appendChild(liveMessage(entry)));
+    if (lane.firstChild) group.appendChild(lane);
+  });
+  return group;
+}
+function liveFor(roundIndex, seat, kinds) {
+  const out = [];
+  S.live.forEach(entry => {
+    if (entry.round !== roundIndex) return;
+    if (seat && entry.seat !== seat) return;
+    if (kinds && kinds.indexOf(entry.kind) < 0) return;
+    out.push(entry);
+  });
+  return out;
+}
+function liveMessage(entry) {
+  const seconds = entry.status === "working" ? (performance.now() - entry.start) / 1000 : 0;
+  const actions = [];
+  if (entry.status === "working") {
+    actions.push(["cancel seat", () => cancelSeat(entry.seat), "cancel this seat while it works"]);
+  }
+  return messageNode({
+    key: "live:" + entry.key, seat: entry.seat, kind: entry.kind,
+    stageLabel: entry.stageLabel || entry.kind, status: entry.status,
+    liveSeconds: seconds, live: entry, headerLine: false,
+    result: { tier: entry.tier, text: "", status: entry.status },
+    actions: actions
+  });
+}
+function disagreementNode(rnd, res, superseded, idx) {
+  const key = "dis:" + rnd.index + ":" + (res.run_id || idx);
+  const node = messageNode({
+    key: key, seat: (S.session.protocol || {}).reader_seat, kind: "disagreements",
+    who: "Disagreements — reader " + ((S.session.protocol || {}).reader_seat || "?"),
+    stageLabel: "reader", result: res, superseded: superseded, packetKey: "pk:" + key,
+    extraChip: res.mapping ? "anonymized" : null,
+    actions: [["copy", () => copyText(res.text || "", m => flash(m))],
+              ["reveal packet", () => togglePacket("pk:" + key)]]
+  });
+  const body = $(".body", node);
+  if (body && res.text) {
+    $$("li, p", body).forEach(line => {
+      if (line.className === "stub") return;
+      const text = String(line.textContent || "").trim();
+      if (!text) return;
+      const wrap = el("span", "seedwrap");
+      wrap.appendChild(document.createTextNode(" "));
+      wrap.appendChild(btn("seed relay", "mini", () => openRelay(rnd.index, text, "disagreement line"), "start a relay from this line"));
+      line.appendChild(wrap);
+    });
+  }
+  if (res.mapping) {
+    const map = Object.keys(res.mapping).sort().map(k => k + "=" + res.mapping[k]).join("  ");
+    node.appendChild(el("p", "meta", "letters " + map + " — the map stayed here, never in the packet"));
+  }
+  return node;
+}
+function reviewNode(rnd, review, superseded, idx) {
+  const wrap = el("section", "msg");
+  wrap.dataset.kind = "review";
+  if (superseded) wrap.dataset.superseded = "1";
+  const head = el("div", "msg-head");
+  head.appendChild(el("span", "chip", "review round"));
+  head.appendChild(el("span", "who", "Review round"));
+  const results = review.results || {};
+  const reviewers = Object.keys(results);
+  const statuses = reviewers.map(r => results[r].status);
+  head.appendChild(statusNode(worstStatus(statuses), reviewers.reduce((n, r) => Math.max(n, results[r].elapsed_s || 0), 0)));
+  if (superseded) head.appendChild(el("span", "chip sup", "superseded"));
+  wrap.appendChild(head);
+  wrap.appendChild(el("p", "meta", "rows are reviewers; cells are the de-anonymized seats they ranked"));
+
+  const tableWrap = el("div", "table-wrap");
+  const table = el("table");
+  const widest = reviewers.reduce((n, r) => Math.max(n, (results[r].ranking_seats || []).length), 0) || 1;
+  const thead = el("thead"); const hr = el("tr");
+  hr.appendChild(el("th", null, "reviewer"));
+  for (let i = 0; i < widest; i++) hr.appendChild(el("th", null, ["1st", "2nd", "3rd", "4th", "5th"][i] || (i + 1) + "th"));
+  thead.appendChild(hr); table.appendChild(thead);
+  const tbody = el("tbody");
+  reviewers.forEach(r => {
+    const tr = el("tr");
+    tr.appendChild(el("td", null, seatLabel(r)));
+    const ranks = results[r].ranking_seats;
+    if (!ranks) {
+      const td = el("td", "unparsed", "ranking not parsed — see raw text");
+      td.colSpan = widest;
+      tr.appendChild(td);
+    } else {
+      for (let i = 0; i < widest; i++) tr.appendChild(el("td", "rank", ranks[i] ? seatLabel(ranks[i]) : ""));
+    }
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  tableWrap.appendChild(table);
+  wrap.appendChild(tableWrap);
+
+  reviewers.forEach(r => {
+    const res = results[r];
+    const key = "rev:" + rnd.index + ":" + idx + ":" + r + ":" + (res.run_id || "");
+    const mapping = (review.mapping_per_reviewer || {})[r] || {};
+    const letters = Object.keys(mapping).sort().map(k => k + "=" + mapping[k]).join("  ");
+    const node = messageNode({
+      key: key, seat: r, kind: "review", stageLabel: "review", result: res,
+      superseded: superseded, packetKey: "pk:" + key,
+      extraChip: letters ? "letters " + letters : null,
+      actions: [["copy", () => copyText(res.text || "", m => flash(m))],
+                ["reveal packet", () => togglePacket("pk:" + key)],
+                ["use in relay", () => openRelay(rnd.index, res.text || "", seatLabel(r) + " review")]]
+    });
+    wrap.appendChild(node);
+  });
+  return wrap;
+}
+function relayNode(rnd, run, runIndex) {
+  const thread = el("section", "thread");
+  const head = el("div", "thread-head");
+  head.appendChild(el("span", "chip", run.step ? "persona step: " + run.step : "relay"));
+  head.appendChild(el("span", "who", run.order.map(seatLabel).join(" then ")));
+  head.appendChild(el("span", "meta", run.turns + (run.turns === 1 ? " turn" : " turns") + " each · " + run.entries.length + " so far"));
+  head.appendChild(statusNode(run.status === "running" ? "working" : (run.status || "done"),
+    run.entries.reduce((n, e) => n + (e.elapsed_s || 0), 0)));
+  thread.appendChild(head);
+  const seeded = S.seed.get(run.run_id);
+  thread.appendChild(el("p", "meta", "topic: " + run.prompt + (seeded ? "  ·  seeded from " + seeded : "")));
+  run.entries.forEach((entry, i) => {
+    const key = "rl:" + rnd.index + ":" + runIndex + ":" + (entry.run_id || i);
+    thread.appendChild(messageNode({
+      key: key, seat: entry.seat, kind: "relay", stageLabel: "turn " + (i + 1), result: entry,
+      packetKey: "pk:" + key,
+      actions: [["reply", () => composerInsert("@" + entry.seat + " ")],
+                ["copy", () => copyText(entry.text || "", m => flash(m))],
+                ["reveal packet", () => togglePacket("pk:" + key)],
+                ["use in relay", () => openRelay(rnd.index, entry.text || "", seatLabel(entry.seat) + " turn " + (i + 1))]]
+    }));
+  });
+  liveFor(rnd.index, null, ["relay"]).filter(e => e.relayRunId === run.run_id)
+    .forEach(entry => thread.appendChild(liveMessage(entry)));
+  return thread;
+}
+function sysCard(label, text) {
+  const card = el("div", "syscard");
+  card.appendChild(el("span", "k", label));
+  card.appendChild(document.createTextNode(text));
+  return card;
+}
+function firstStart(list) {
+  let best = "";
+  list.forEach(x => {
+    const t = x && x.started_at;
+    if (t && (!best || t < best)) best = t;
+  });
+  return best;
+}
+function roundNode(rnd) {
+  const sec = el("section", "round");
+  sec.dataset.round = String(rnd.index);
+
+  const head = el("div", "round-head");
+  head.appendChild(el("span", "rnum", "Round " + (rnd.index + 1)));
+  head.appendChild(el("span", "meta", clockOf(rnd.asked_at)));
+  const seats = memberSeats();
+  const doneCount = seats.filter(s => (rnd.stage1[s] || {}).status === "done").length;
+  const badCount = seats.filter(s => rnd.stage1[s] && rnd.stage1[s].status !== "done").length;
+  const summary = el("span", "st");
+  summary.dataset.s = badCount ? "error" : (doneCount === seats.length && seats.length ? "done" : "queued");
+  summary.appendChild(el("span", "dot"));
+  summary.appendChild(el("span", "txt", doneCount + "/" + seats.length + " answered" + (badCount ? " · " + badCount + " failed" : "")));
+  head.appendChild(summary);
+  const cmp = el("button", "mini", S.compare.has(rnd.index) ? "stack answers" : "compare answers");
+  cmp.setAttribute("aria-pressed", String(S.compare.has(rnd.index)));
+  on(cmp, "click", () => {
+    if (S.compare.has(rnd.index)) S.compare.delete(rnd.index); else S.compare.add(rnd.index);
+    renderTranscript();
+  });
+  head.appendChild(cmp);
+  sec.appendChild(head);
+
+  const ask = el("article", "msg");
+  ask.dataset.kind = "question";
+  const ahead = el("div", "msg-head");
+  ahead.appendChild(el("span", "chip", "you"));
+  ahead.appendChild(el("span", "who", "Question"));
+  ahead.appendChild(el("span", "meta", "round " + (rnd.index + 1)));
+  const aacts = el("div", "msg-actions");
+  aacts.appendChild(btn("copy", "link", () => copyText(rnd.question, m => flash(m))));
+  aacts.appendChild(btn("quote", "link", () => composerInsert(String(rnd.question).split("\n").map(l => "> " + l).join("\n"), "")));
+  aacts.appendChild(btn("use in relay", "link", () => openRelay(rnd.index, rnd.question, "the question")));
+  ahead.appendChild(aacts);
+  ask.appendChild(ahead);
+  const qbody = bodyNode(rnd.question, "no question text");
+  highlightSeats(qbody);
+  ask.appendChild(qbody);
+  if (rnd.context) {
+    const d = el("details", "packet");
+    d.appendChild(el("summary", null, "context sent with this round, verbatim"));
+    const pre = el("pre");
+    pre.textContent = rnd.context;
+    d.appendChild(pre);
+    ask.appendChild(d);
+  }
+  sec.appendChild(ask);
+  sec.appendChild(sysCard("round started", seats.map(seatLabel).join(", ") + " received the same packet, in parallel · mode " + S.session.mode));
+
+  const blocks = [];
+  blocks.push({ t: firstStart(seats.map(s => rnd.stage1[s]).concat((rnd.reruns || []).map(r => r.result))) || rnd.asked_at,
+                node: lanesNode(rnd) });
+  (rnd.disagreements_history || []).forEach((res, i) => blocks.push({ t: res.started_at, node: disagreementNode(rnd, res, true, i) }));
+  if (rnd.disagreements) blocks.push({ t: rnd.disagreements.started_at, node: disagreementNode(rnd, rnd.disagreements, false, "cur") });
+  (rnd.review_history || []).forEach((rev, i) => {
+    if (Object.keys(rev.results || {}).length) {
+      blocks.push({ t: firstStart(Object.keys(rev.results).map(k => rev.results[k])), node: reviewNode(rnd, rev, true, i) });
+    }
+  });
+  if (rnd.review && Object.keys(rnd.review.results || {}).length) {
+    const rev = rnd.review;
+    blocks.push({ t: firstStart(Object.keys(rev.results).map(k => rev.results[k])), node: reviewNode(rnd, rev, false, "cur") });
+    const statuses = Object.keys(rev.results).map(k => rev.results[k].status);
+    if (!liveFor(rnd.index, null, ["review"]).length) {
+      blocks.push({ t: firstStart(Object.keys(rev.results).map(k => rev.results[k])) + "~z",
+                    node: sysCard("review round complete", Object.keys(rev.results).length + " reviewer(s) · worst status " + worstStatus(statuses)) });
+    }
+  }
+  (rnd.relays || []).forEach((run, i) => {
+    const t = firstStart(run.entries) || "9998";
+    blocks.push({ t: t, node: relayNode(rnd, run, i) });
+    if (run.status && run.status !== "running") {
+      blocks.push({ t: t + "~z", node: sysCard(run.step ? "persona step finished" : "relay finished",
+        (run.step ? run.step + " — " : "") + run.order.map(seatLabel).join(" then ") + " · " + run.entries.length + " turn(s) · status " + run.status) });
+    }
+  });
+  blocks.sort((a, b) => (a.t === b.t ? 0 : (a.t < b.t ? -1 : 1)));
+  blocks.forEach(b => sec.appendChild(b.node));
+
+  /* live stages that have no record entry yet (disagreements, review, a relay
+     whose first turn has not landed) sit at the end — they are the newest */
+  liveFor(rnd.index, null, ["disagreements", "review"]).forEach(entry => sec.appendChild(liveMessage(entry)));
+  liveFor(rnd.index, null, ["relay"]).filter(e => !(rnd.relays || []).some(r => r.run_id === e.relayRunId))
+    .forEach(entry => sec.appendChild(liveMessage(entry)));
+  S.notices.filter(n => n.round === rnd.index).forEach(n => sec.appendChild(sysCard("session note", n.text)));
+
+  sec.appendChild(roundTools(rnd));
+  return sec;
+}
+function roundTools(rnd) {
+  const bar = el("div", "round-tools");
+  const answered = answeredSeats(rnd);
+  const busy = anyLive();
+  const dis = btn("Extract disagreements", "mini", () => runStage("/api/disagreements", { id: S.sid, round: rnd.index }, "disagreements", rnd.index));
+  dis.disabled = busy || answered.length < 2;
+  bar.appendChild(dis);
+  const rev = btn("Run review round", "mini", () => runStage("/api/review", { id: S.sid, round: rnd.index, reviewers: answered }, "review", rnd.index));
+  rev.disabled = busy || answered.length < 2;
+  bar.appendChild(rev);
+  const rel = btn("Relay…", "mini", () => openRelay(rnd.index, "", null));
+  rel.disabled = busy || answered.length < 2;
+  bar.appendChild(rel);
+  if (S.session.mode === "persona" && rnd.index === S.session.rounds.length - 1) {
+    const state = S.session.persona_state || { step_index: 0, steps: [] };
+    const next = (state.steps || [])[state.step_index + 1];
+    const p = btn(next ? "Advance persona step: " + next : "Persona sequence complete", "mini", () => personaStep());
+    p.disabled = busy || !next;
+    bar.appendChild(p);
+  }
+  if (S.relay && S.relay.round === rnd.index) bar.appendChild(relayForm(rnd));
+  return bar;
+}
+function relayForm(rnd) {
+  const form = el("div", "stack");
+  form.style.flex = "1 1 100%";
+  const answered = answeredSeats(rnd);
+  const pickRow = el("div", "row tight");
+  pickRow.appendChild(el("span", "hint", "order:"));
+  answered.forEach(seat => {
+    const at = S.relay.order.indexOf(seat);
+    const b = btn((at >= 0 ? (at + 1) + ". " : "+ ") + seatLabel(seat), "mini", () => {
+      const i = S.relay.order.indexOf(seat);
+      if (i >= 0) S.relay.order.splice(i, 1); else S.relay.order.push(seat);
+      renderTranscript();
+    });
+    b.setAttribute("aria-pressed", String(at >= 0));
+    pickRow.appendChild(b);
+  });
+  const turns = el("select");
+  const range = (S.config.ranges && S.config.ranges.turns) || [1, 5];
+  for (let i = range[0]; i <= range[1]; i++) {
+    const o = el("option", null, String(i)); o.value = String(i);
+    if (i === S.relay.turns) o.selected = true;
+    turns.appendChild(o);
+  }
+  on(turns, "change", () => { S.relay.turns = Number(turns.value); });
+  const tl = el("label", "field", "turns ");
+  tl.appendChild(turns);
+  pickRow.appendChild(tl);
+  form.appendChild(pickRow);
+  const ta = el("textarea");
+  ta.rows = 2;
+  ta.value = S.relay.prompt;
+  ta.placeholder = "the argument topic — seats not in the order stay silent";
+  ta.setAttribute("aria-label", "Relay prompt");
+  on(ta, "input", () => { S.relay.prompt = ta.value; });
+  form.appendChild(ta);
+  const row = el("div", "row tight");
+  row.appendChild(btn("Run relay", "mini primary", () => runRelay(rnd.index)));
+  row.appendChild(btn("close", "link", () => { S.relay = null; renderTranscript(); }));
+  if (S.relay.seededFrom) row.appendChild(el("span", "hint", "prompt seeded from " + S.relay.seededFrom));
+  if (S.relay.trimmed) row.appendChild(el("span", "hint", "trimmed to the 4000-character prompt cap"));
+  form.appendChild(row);
+  return form;
+}
+function highlightSeats(root) {
+  const seats = memberSeats();
+  if (!seats.length) return;
+  const re = new RegExp("@(" + seats.map(s => s.replace(/[^a-z0-9_-]/gi, "")).join("|") + ")\\b", "g");
+  const walk = node => {
+    const kids = Array.prototype.slice.call(node.childNodes || []);
+    kids.forEach(child => {
+      if (child.nodeType === 3) {
+        const text = String(child.nodeValue || "");
+        if (!re.test(text)) { re.lastIndex = 0; return; }
+        re.lastIndex = 0;
+        const frag = document.createDocumentFragment();
+        let last = 0, m;
+        while ((m = re.exec(text)) !== null) {
+          if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+          const mark = el("span", "seatmark", m[0]);
+          mark.dataset.seat = m[1];
+          frag.appendChild(mark);
+          last = m.index + m[0].length;
+        }
+        if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+        node.replaceChild(frag, child);
+      } else if (child.nodeType === 1) { walk(child); }
+    });
+  };
+  walk(root);
+}
+function renderTranscript() {
+  const host = $("#transcript");
+  const scroller = $("#transcriptScroll");
+  const nearBottom = (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) < 160;
+  const keep = scroller.scrollTop;
+  clear(host);
+  if (!S.session) {
+    $("#emptyNote").hidden = false;
+    return;
+  }
+  $("#emptyNote").hidden = true;
+  if (!S.session.rounds.length) {
+    host.appendChild(sysCard("session created", "No round yet. Ask the first question from the composer below."));
+  }
+  S.session.rounds.forEach(rnd => host.appendChild(roundNode(rnd)));
+  scroller.scrollTop = nearBottom ? scroller.scrollHeight : keep;
+  renderRoster();
+  refreshComposer();
+}
+
+/* ================================================================= ACTIONS */
+function liveKey(prefix, id) { return prefix + ":" + id; }
+function addLive(entry) { entry.gen = S.gen; entry.sid = S.sid; S.live.set(entry.key, entry); }
+function dropLive(key) { S.live.delete(key); }
+/* A "queued" row is a PLACEHOLDER the page invents between the POST and the
+   first event. The event can beat the POST's own response (the worker publishes
+   from another thread), so a placeholder must never be added on top of a call
+   that already started, and every event that names a seat clears the
+   placeholders for it — otherwise a stale QUEUED row sits in the live map
+   forever and wedges every "is anything running" check. */
+function liveRunFor(round, seat) {
+  let found = false;
+  S.live.forEach(e => { if (!e.placeholder && e.round === round && e.seat === seat) found = true; });
+  return found;
+}
+function addQueued(entry) {
+  if (S.live.has(entry.key) || liveRunFor(entry.round, entry.seat)) return;
+  entry.placeholder = true;
+  addLive(entry);
+}
+function dropPlaceholders(round, seat) {
+  S.live.forEach(e => {
+    if (e.placeholder && e.round === round && (seat == null || e.seat === seat)) dropLive(e.key);
+  });
+}
+async function sendRound(question, context) {
+  const t = stamp(), sid = t.sid;
+  if (!sid) { flash("no session open", "error"); return; }
+  try {
+    const res = await api("/api/round", { id: sid, question: question, context: context || "" });
+    if (!guard(t)) return;
+    const idx = res.round;
+    if (!S.session.rounds[idx]) {
+      S.session.rounds[idx] = { index: idx, question: question, context: context || "",
+        asked_at: new Date().toISOString(), stage1: {}, reruns: [], disagreements: null,
+        disagreements_history: [], review: { mapping_per_reviewer: {}, results: {} },
+        review_history: [], relays: [] };
+    }
+    memberSeats().forEach(seat => {
+      if ((S.session.rounds[idx].stage1 || {})[seat]) return;      // the event beat this response
+      addQueued({ key: liveKey("q", idx + ":" + seat), kind: "stage1", stageLabel: "stage 1",
+                  round: idx, seat: seat, tier: (S.session.members[seat] || {}).tier,
+                  status: "queued", start: performance.now() });
+    });
+    renderTranscript();
+    scheduleRefresh(t);
+    flash("round " + (idx + 1) + " started");
+  } catch (e) { flash("round: " + errText(e), "error"); }
+}
+async function runStage(path, body, kind, roundIndex) {
+  const t = stamp(), sid = t.sid;
+  try {
+    await api(path, body);
+    if (!guard(t)) return;
+    if (kind === "disagreements") {
+      addQueued({ key: liveKey("dis", roundIndex), kind: "disagreements", stageLabel: "reader",
+                  round: roundIndex, seat: (S.session.protocol || {}).reader_seat,
+                  tier: (S.session.protocol || {}).reader_tier, status: "queued", start: performance.now() });
+    } else if (kind === "review") {
+      (body.reviewers || []).forEach(seat => {
+        addQueued({ key: liveKey("rev", roundIndex + ":" + seat), kind: "review", stageLabel: "review",
+                    round: roundIndex, seat: seat, tier: (S.session.members[seat] || {}).tier,
+                    status: "queued", start: performance.now() });
+      });
+    }
+    renderTranscript();
+    flash(kind + " started");
+  } catch (e) { flash(kind + ": " + errText(e), "error"); }
+}
+function openRelay(roundIndex, seedText, seededFrom) {
+  const raw = String(seedText || "");
+  const prompt = raw.slice(0, 4000);
+  const rnd = S.session && S.session.rounds[roundIndex];
+  const answered = rnd ? answeredSeats(rnd) : [];
+  S.relay = { round: roundIndex, order: answered.slice(0, 2), turns: 1, prompt: prompt,
+              seededFrom: seededFrom || null, trimmed: raw.length > prompt.length };
+  renderTranscript();
+  const box = document.querySelector('.round[data-round="' + roundIndex + '"] textarea');
+  if (box && box.focus) box.focus();
+}
+async function runRelay(roundIndex) {
+  const t = stamp(), sid = t.sid;
+  const relay = S.relay;
+  if (!relay) return;
+  if (relay.order.length < 2) { flash("relay: pick at least two answered seats, in order", "error"); return; }
+  if (!relay.prompt.trim()) { flash("relay: a topic is required", "error"); return; }
+  try {
+    const res = await api("/api/relay", { id: sid, round: roundIndex, order: relay.order,
+                                          turns: relay.turns, prompt: relay.prompt.trim() });
+    if (!guard(t)) return;
+    if (relay.seededFrom) S.seed.set(res.run_id, relay.seededFrom);
+    const rnd = S.session.rounds[roundIndex];
+    rnd.relays[res.run] = rnd.relays[res.run] || { run_id: res.run_id, step: null, order: relay.order.slice(),
+                                                   turns: relay.turns, prompt: relay.prompt.trim(),
+                                                   entries: [], status: "running" };
+    S.relay = null;
+    renderTranscript();
+    scheduleRefresh(t);
+    flash("relay started");
+  } catch (e) { flash("relay: " + errText(e), "error"); }
+}
+async function rerunSeat(roundIndex, seat) {
+  const t = stamp(), sid = t.sid;
+  try {
+    const res = await api("/api/rerun", { id: sid, round: roundIndex, seat: seat });
+    if (!guard(t)) return;
+    addQueued({ key: liveKey("run", res.run_id), kind: "rerun", stageLabel: "re-run", round: roundIndex,
+                seat: seat, tier: (S.session.members[seat] || {}).tier, run_id: res.run_id,
+                status: "queued", start: performance.now() });
+    renderTranscript();
+    flash("re-run started for " + seatLabel(seat));
+  } catch (e) { flash("re-run: " + errText(e), "error"); }
+}
+async function cancelSeat(seat) {
+  const t = stamp(), sid = t.sid;
+  try {
+    const res = await api("/api/cancel", { id: sid, seat: seat });
+    if (!guard(t)) return;
+    flash("cancel requested for " + seatLabel(seat) + " — " + res.cancelled + " process(es) killed");
+  } catch (e) { flash("cancel: " + errText(e), "error"); }
+}
+async function personaStep() {
+  const t = stamp(), sid = t.sid;
+  try {
+    const res = await api("/api/persona/step", { id: sid });
+    if (!guard(t)) return;
+    if (res.done && !res.started) { flash("persona sequence is at " + res.step); }
+    else flash("persona step started: " + res.step);
+    scheduleRefresh(t);
+  } catch (e) { flash("persona step: " + errText(e), "error"); }
+}
+
+/* ================================================================ COMPOSER */
+function parseSeatTokens(text) {
+  const seats = memberSeats();
+  const out = [];
+  const re = /@([a-zA-Z0-9_-]{1,24})/g;
+  let m;
+  while ((m = re.exec(String(text || ""))) !== null) {
+    const seat = m[1].toLowerCase();
+    if (seats.indexOf(seat) >= 0 && out.indexOf(seat) < 0) out.push(seat);
+  }
+  return out;
+}
+function updateComposerTokens() {
+  const host = $("#composerTokens");
+  clear(host);
+  parseSeatTokens($("#composerText").value).forEach(seat => {
+    const chip = el("span", "chip seat", "@" + seat);
+    chip.dataset.seat = seat;
+    host.appendChild(chip);
+  });
+}
+function refreshComposer() {
+  const mode = $("#delivery").value;
+  const persona = S.session && S.session.mode === "persona";
+  $("#composerTurns").hidden = mode !== "relay";
+  $("#turnsLabel").hidden = mode !== "relay";
+  const hint = $("#composerHint");
+  if (!S.session) {
+    hint.textContent = "no session open";
+  } else if (mode === "parallel") {
+    hint.textContent = "every enabled seat answers the same packet, blind";
+  } else if (mode === "relay") {
+    const tagged = parseSeatTokens($("#composerText").value);
+    hint.textContent = tagged.length >= 2
+      ? "relay order: " + tagged.join(" then ")
+      : "tag at least two answered seats with @seat to relay";
+  } else {
+    hint.textContent = persona
+      ? "advances the frozen persona sequence — no composer text is sent; your draft stays here"
+      : "persona step needs a session created in persona mode";
+  }
+  $("#cancelAllBtn").disabled = !S.session || !anyLive();
+  $("#sendBtn").disabled = !S.session;
+  $("#composerLabel").textContent = mode === "persona"
+    ? "Persona step — the sequence is frozen, the composer text is not sent"
+    : "Message — a new round in this session";
+}
+on($("#delivery"), "change", refreshComposer);
+on($("#composerText"), "input", () => { updateComposerTokens(); refreshComposer(); });
+on($("#composerText"), "keydown", ev => {
+  if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); send(); }
+});
+on($("#sendBtn"), "click", () => send());
+on($("#cancelAllBtn"), "click", async () => {
+  const t = stamp(), sid = t.sid;
+  try {
+    const res = await api("/api/cancel", { id: sid });
+    if (!guard(t)) return;
+    flash("cancel requested — " + res.cancelled + " process(es) killed");
+  } catch (e) { flash("cancel: " + errText(e), "error"); }
+});
+async function send() {
+  if (!S.session) { flash("no session open", "error"); return; }
+  const mode = $("#delivery").value;
+  const text = $("#composerText").value.trim();
+  const context = $("#composerContext").value;
+  if (mode === "persona") { await personaStep(); return; }
+  if (!text) { flash("a message is required", "error"); return; }
+  if (mode === "parallel") {
+    $("#composerText").value = "";
+    $("#composerContext").value = "";
+    updateComposerTokens();
+    await sendRound(text, context);
+    return;
+  }
+  const rnd = S.session.rounds[S.session.rounds.length - 1];
+  if (!rnd) { flash("relay needs a round with answers first", "error"); return; }
+  const answered = answeredSeats(rnd);
+  const order = parseSeatTokens(text).filter(s => answered.indexOf(s) >= 0);
+  if (order.length < 2) { flash("tagged relay needs two or more answered seats tagged with @seat", "error"); return; }
+  S.relay = { round: rnd.index, order: order, turns: Number($("#composerTurns").value) || 1,
+              prompt: text.slice(0, 4000), seededFrom: "the composer", trimmed: text.length > 4000 };
+  await runRelay(rnd.index);
+  if (!S.relay) { $("#composerText").value = ""; updateComposerTokens(); }
+}
+
+/* ==================================================================== INFO */
+function renderRoster() {
+  const host = $("#roster");
+  clear(host);
+  if (!S.session) return;
+  const rnd = S.session.rounds[S.session.rounds.length - 1];
+  memberSeats().forEach(seat => {
+    const li = el("li");
+    li.dataset.seat = seat;
+    const chip = el("span", "chip seat", seatLabel(seat));
+    chip.dataset.seat = seat;
+    li.appendChild(chip);
+    const member = S.session.members[seat] || {};
+    li.appendChild(el("span", "meta", member.tier + (member.role ? " · " + member.role : "")));
+    const live = liveFor(rnd ? rnd.index : -1, seat, null)[0];
+    if (live) {
+      const node = statusNode(live.status, live.status === "working" ? (performance.now() - live.start) / 1000 : 0);
+      live.rosterNode = node;
+      li.appendChild(node);
+    } else {
+      const res = rnd && rnd.stage1[seat];
+      li.appendChild(res ? statusNode(res.status, res.elapsed_s) : el("span", "st", "IDLE"));
+    }
+    host.appendChild(li);
+  });
+}
+function renderEffKv() {
+  const host = $("#effKv");
+  clear(host);
+  if (!S.session) return;
+  const add = (k, v) => { host.appendChild(el("dt", null, k)); host.appendChild(el("dd", null, v)); };
+  add("hash", S.session.effective_config_sha256 || "none — migrated schema-1 session");
+  add("mode", S.session.mode);
+  add("id", S.session.id);
+  memberSeats().forEach(seat => {
+    const m = S.session.members[seat];
+    const bits = [m.tier];
+    if (m.effort) bits.push("effort " + m.effort);
+    if (m.max_tokens) bits.push("max_tokens " + m.max_tokens);
+    bits.push("timeout " + m.timeout_s + "s");
+    if (m.role) bits.push("role " + m.role);
+    if (m.charter_sha256) bits.push("charter " + String(m.charter_sha256).slice(0, 12));
+    add(seat, bits.join(" · "));
+  });
+  const p = S.session.protocol || {};
+  add("reader", p.reader_seat + "/" + p.reader_tier);
+  add("anonymize", "review " + ((p.anonymize || {}).review ? "on" : "off") + " · disagreements " + ((p.anonymize || {}).disagreements ? "on" : "off"));
+  add("bounds", Object.keys(p.bounds || {}).map(k => k + " " + p.bounds[k]).join(" · "));
+  add("stop on error", p.stop_on_error ? "yes" : "no");
+  add("live log", p.live_log ? "yes" : "no");
+  if (S.session.migrated_from) add("migrated from", "schema " + S.session.migrated_from);
+}
+function renderDefaults() {
+  const host = $("#defaultRows");
+  clear(host);
+  if (!S.config) return;
+  if (!S.defaults) S.defaults = { mode: "roundtable", protocol: defaultProtocol(), members: {}, order: Object.keys(S.config.seats) };
+  if (!S.defaults.protocol) S.defaults.protocol = defaultProtocol();
+  const keep = S.create;
+  S.create = null;                      /* protocol rows read S.create.order when it exists */
+  renderProtocolRows(host, S.defaults.protocol, () => store("rt2.defaults", S.defaults));
+  S.create = keep;
+  host.appendChild(btn("Use these in a new session", "mini", openCreate));
+}
+/* A background record refresh must never overwrite what the human is typing —
+   these two fields are the only judgment on the page. */
+function isEditing(node) { return document.activeElement === node; }
+function renderJudgement() {
+  const persona = S.session && S.session.mode === "persona";
+  $("#decisionWrap").hidden = !persona;
+  $("#decisionNote").hidden = !!persona || !S.session;
+  if (!S.session) {
+    if (!isEditing($("#notes"))) $("#notes").value = "";
+    $("#notesSaved").textContent = ""; $("#exportPath").textContent = ""; $("#dSaved").textContent = "";
+    return;
+  }
+  if (!isEditing($("#notes")) && !S.notesTimer) $("#notes").value = S.session.notes || "";
+  const d = S.session.decision;
+  if (persona) {
+    if (!isEditing($("#dStance"))) $("#dStance").value = (d && d.stance) || "hold";
+    if (!isEditing($("#dRationale"))) $("#dRationale").value = (d && d.rationale) || "";
+    if (!isEditing($("#dDissent"))) $("#dDissent").value = (d && d.dissent) || "";
+    $("#dSaved").textContent = d ? "saved " + clockOf(d.saved_at) : "not saved";
+  }
+  const exported = S.session.exported || {};
+  $("#exportPath").textContent = [exported.md ? "md: " + exported.md : "", exported.json ? "json: " + exported.json : ""]
+    .filter(Boolean).join("   ");
+}
+on($("#notes"), "input", () => {
+  if (!S.session) return;
+  const t = stamp(), sid = t.sid;
+  clearTimeout(S.notesTimer);
+  S.notesTimer = setTimeout(async () => {
+    S.notesTimer = 0;                     /* released: a refresh may repaint the field again */
+    try {
+      const value = $("#notes").value;
+      await api("/api/notes", { id: sid, notes: value });
+      if (!guard(t)) return;
+      S.session.notes = value;
+      $("#notesSaved").textContent = "saved " + new Date().toTimeString().slice(0, 8);
+    } catch (e) { $("#notesSaved").textContent = "not saved — " + errText(e); }
+  }, 700);
+});
+on($("#dSave"), "click", async () => {
+  const t = stamp(), sid = t.sid;
+  try {
+    const res = await api("/api/decision", { id: sid, decision: {
+      stance: $("#dStance").value, rationale: $("#dRationale").value, dissent: $("#dDissent").value } });
+    if (!guard(t)) return;
+    S.session.decision = res.decision;
+    $("#dSaved").textContent = "saved " + clockOf(res.saved);
+    flash("decision saved — yours, not a model's");
+  } catch (e) { flash("decision: " + errText(e), "error"); }
+});
+async function exportSession(format) {
+  const t = stamp(), sid = t.sid;
+  try {
+    const res = await api("/api/export", { id: sid, format: format });
+    if (!guard(t)) return;
+    S.session.exported = S.session.exported || {};
+    S.session.exported[format] = res.path;
+    renderJudgement();
+    flash("exported " + format + " to " + res.path);
+  } catch (e) { flash("export: " + errText(e), "error"); }
+}
+on($("#exportMd"), "click", () => exportSession("md"));
+on($("#exportJson"), "click", () => exportSession("json"));
+
+/* ================================================================== EVENTS */
+function scheduleRefresh(t) {
+  clearTimeout(S.refreshTimer);
+  S.refreshTimer = setTimeout(() => refreshSession(t), 220);
+}
+async function refreshSession(t) {
+  try {
+    const data = await api("/api/session/" + t.sid);
+    if (!guard(t)) return;
+    S.session = data;
+    paintSession();
+  } catch (e) {
+    /* fail open, but SAY SO: a silent failure leaves a transcript quietly
+       behind the record, which is worse than an ugly line */
+    if (guard(t)) flash("record refresh failed — " + errText(e) + " · the transcript may be behind", "error");
+  }
+}
+function paintSession() {
+  const s = S.session;
+  $("#sessTitle").textContent = s ? (s.title || "Session " + s.id.slice(0, 8)) : "Roundtable";
+  $("#sessMeta").textContent = s
+    ? (s.mode + " · " + s.rounds.length + (s.rounds.length === 1 ? " round" : " rounds") +
+       " · created " + clockOf(s.created) + (s.fake ? " · fake seats" : "") +
+       " · config " + String(s.effective_config_sha256 || "none").slice(0, 12))
+    : "Three seats, one question, structured rounds. The synthesis is yours.";
+  renderTranscript();
+  renderEffKv();
+  renderJudgement();
+  renderSessions();
+}
+async function openSession(id) {
+  if (!ID_RE.test(String(id || ""))) { flash("that is not a session id", "error"); return; }
+  if (S.stream) { try { S.stream.close(); } catch (e) { /* already closed */ } S.stream = null; }
+  clearTimeout(S.notesTimer); S.notesTimer = 0;
+  clearTimeout(S.refreshTimer); S.refreshTimer = 0;
+  S.live.clear(); S.seen.clear(); S.compare.clear(); S.relay = null; S.notices = [];
+  S.sid = id;
+  S.gen += 1;                 /* a reopen of the same id is a NEW generation */
+  const t = stamp();
+  S.session = null;           /* a failed load must not leave the old session painted */
+  paintSession();
+  closeCreate();
+  try {
+    const data = await api("/api/session/" + t.sid);
+    if (!guard(t)) return;
+    S.session = data;
+    paintSession();
+    openStream(t);
+  } catch (e) {
+    if (guard(t)) flash("session " + String(id).slice(0, 8) + " did not load — " + errText(e), "error");
+  }
+}
+function openStream(t) {
+  const stream = new EventSource("/api/events?id=" + encodeURIComponent(t.sid));
+  S.stream = stream;
+  stream.onmessage = ev => {
+    if (!guard(t)) return;
+    let msg = null;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    handleEvent(t, msg);
+  };
+  stream.onopen = () => { if (guard(t)) refreshSession(t); };
+  stream.onerror = () => { /* EventSource reconnects itself; the record is the truth */ };
+}
+function roundOf(index) {
+  if (!S.session) return null;
+  return S.session.rounds[index] || null;
+}
+function eventResult(msg) {
+  return { run_id: msg.entry_run_id || msg.run_id, started_at: msg.started_at || "", tier: msg.tier,
+           packet: "", text: msg.text || "", header: msg.header || "", stderr_tail: msg.stderr_tail || "",
+           elapsed_s: msg.elapsed_s, exit_code: msg.exit_code, timed_out: msg.status === "timed_out",
+           cancelled: msg.status === "cancelled", status: msg.status, seat: msg.seat,
+           ranking_seats: msg.ranking_seats === undefined ? null : msg.ranking_seats };
+}
+function handleEvent(t, msg) {
+  if (!guard(t) || !S.session) return;
+  const type = msg.type;
+  if (type === "argue_turn" || type === "argue_done") return;   /* legacy aliases: dropped on purpose */
+
+  if (type === "round_started") {
+    if (!roundOf(msg.round)) scheduleRefresh(t);
+    (msg.seats || []).forEach(seat => {
+      addQueued({ key: liveKey("q", msg.round + ":" + seat), kind: "stage1", stageLabel: "stage 1",
+                  round: msg.round, seat: seat, tier: (S.session.members[seat] || {}).tier,
+                  status: "queued", start: performance.now() });
+    });
+    renderTranscript();
+    return;
+  }
+  if (type === "seat_started") {
+    dropPlaceholders(msg.round, msg.seat);
+    const runId = msg.entry_run_id || msg.run_id;
+    const kind = msg.stage === "stage1" ? "stage1"
+      : msg.stage === "rerun" ? "rerun"
+      : msg.stage === "review" ? "review"
+      : msg.stage === "disagreements" ? "disagreements" : "relay";
+    addLive({ key: liveKey("run", runId), kind: kind, stageLabel: msg.step || msg.stage, round: msg.round,
+              seat: msg.seat, tier: msg.tier, run_id: runId, relayRunId: kind === "relay" ? msg.run_id : null,
+              status: "working", start: performance.now() });
+    renderTranscript();
+    return;
+  }
+  if (type === "seat_done" || type === "seat_error") {
+    dropLive(liveKey("run", msg.entry_run_id || msg.run_id));
+    dropPlaceholders(msg.round, msg.seat);
+    const rnd = roundOf(msg.round);
+    if (rnd) {
+      if (msg.stage === "stage1") rnd.stage1[msg.seat] = eventResult(msg);
+      else if (msg.stage === "review") rnd.review.results[msg.seat] = eventResult(msg);
+    }
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "rerun_done") {
+    dropLive(liveKey("run", msg.run_id));
+    dropPlaceholders(msg.round, msg.seat);
+    const rnd = roundOf(msg.round);
+    if (rnd) {
+      const previous = rnd.stage1[msg.seat];
+      if (previous) rnd.reruns.push({ seat: msg.seat, result: previous });
+      rnd.stage1[msg.seat] = eventResult(msg);
+    }
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "disagreements_done") {
+    dropLive(liveKey("run", msg.run_id));
+    dropPlaceholders(msg.round, msg.seat);
+    const rnd = roundOf(msg.round);
+    if (rnd) {
+      if (rnd.disagreements) rnd.disagreements_history.push(rnd.disagreements);
+      const res = eventResult(msg);
+      res.mapping = msg.mapping || null;
+      rnd.disagreements = res;
+    }
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "review_done") {
+    liveFor(msg.round, null, ["review"]).forEach(e => dropLive(e.key));
+    dropPlaceholders(msg.round, null);
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "relay_turn") {
+    dropLive(liveKey("run", msg.entry_run_id || msg.run_id));
+    dropPlaceholders(msg.round, msg.seat);
+    const rnd = roundOf(msg.round);
+    if (rnd) {
+      const run = rnd.relays.filter(r => r.run_id === msg.run_id)[0];
+      const res = eventResult(msg);
+      if (run && !run.entries.some(e => e.run_id === res.run_id)) run.entries.push(res);
+    }
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "relay_done") {
+    const rnd = roundOf(msg.round);
+    if (rnd) {
+      const run = rnd.relays.filter(r => r.run_id === msg.run_id)[0];
+      if (run) run.status = msg.status;
+    }
+    liveFor(msg.round, null, ["relay"]).forEach(e => { if (e.relayRunId === msg.run_id) dropLive(e.key); });
+    dropPlaceholders(msg.round, null);
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "persona_step_done") {
+    if (S.session.persona_state) {
+      S.session.persona_state.step_index = msg.step_index;
+      S.session.persona_state.done = !!msg.done;
+    }
+    S.notices.push({ round: msg.round, text: "persona step " + msg.step + " finished with status " + msg.status });
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "cancelled") {
+    S.live.forEach(entry => { if (!msg.seat || entry.seat === msg.seat) entry.status = "cancelled"; });
+    const rnd = S.session.rounds[S.session.rounds.length - 1];
+    S.notices.push({ round: rnd ? rnd.index : 0,
+                     text: "cancel requested" + (msg.seat ? " for " + seatLabel(msg.seat) : " for the whole session") +
+                           " — " + msg.killed + " process(es) killed" });
+    renderTranscript();
+    scheduleRefresh(t);
+    return;
+  }
+  if (type === "resync") { scheduleRefresh(t); return; }
+}
+
+/* live timers: the only thing that repaints between renders */
+setInterval(() => {
+  const now = performance.now();
+  S.live.forEach(entry => {
+    if (entry.gen !== S.gen || entry.sid !== S.sid) { dropLive(entry.key); return; }  /* stale generation */
+    if (entry.status !== "working") return;
+    const seconds = (now - entry.start) / 1000;
+    if (entry.node) setStatus(entry.node, "working", seconds);
+    if (entry.rosterNode) setStatus(entry.rosterNode, "working", seconds);
+  });
+}, 250);
+
+/* =================================================================== BOOT */
+(async function boot() {
+  try {
+    S.config = await api("/api/config");
+  } catch (e) {
+    flash("server not reachable — is roundtable.py running?", "error");
+    return;
+  }
+  $("#fakeBanner").hidden = !S.config.fake;
+  const turns = $("#composerTurns");
+  const range = (S.config.ranges && S.config.ranges.turns) || [1, 5];
+  for (let i = range[0]; i <= range[1]; i++) {
+    const o = el("option", null, String(i)); o.value = String(i);
+    turns.appendChild(o);
+  }
+  renderDefaults();
+  refreshComposer();
+  await loadSessions();
+  let wanted = "";
+  try { wanted = new URLSearchParams(location.search).get("session") || ""; } catch (e) { wanted = ""; }
+  if (ID_RE.test(wanted)) await openSession(wanted);
+  else if (!S.sessions.length) openCreate();
+})();
+</script>
+</body>
+</html>
