@@ -1,0 +1,16 @@
+#!/bin/bash
+# lane-queue — conductor-side convenience for popperwick-lane-queue (NOT root-owned;
+# lives in the conductor's ~/.local/bin as a copy of this file). Builds the stdin
+# format and calls the one sudoers-authorised program. One message per call.
+#
+#   lane-queue "<conversation name or uuid>" "<message body>"
+#   lane-queue "<conversation name or uuid>" < body.md
+#
+# Needs a Claude Code permission rule so the classifier lets the conductor call it:
+#   Bash(sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-queue)
+set -euo pipefail
+[ "$#" -ge 1 ] || { printf 'usage: lane-queue "<thread>" ["<body>"]  (body on stdin if omitted)\n' >&2; exit 64; }
+thread="$1"; shift
+if [ "$#" -ge 1 ]; then body="$*"; else body="$(cat)"; fi
+[ -n "$body" ] || { printf 'lane-queue: empty body\n' >&2; exit 65; }
+printf 'THREAD: %s\n\n%s' "$thread" "$body" | sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-queue

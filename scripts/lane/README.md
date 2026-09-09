@@ -149,3 +149,7 @@ run scratch.**
   2026-08-13 narrowing sits in the profile as a commented, NOT-ACTIVE block.
 - The lane's Claude Code install must resolve, through every symlink, to
   somewhere under `/Users/popperwick-lane/.local`; the launcher dies otherwise.
+
+## popperwick-lane-queue (added 2026-09-09, DRAFT — Sol review pending, not installed)
+
+The second and only other program the conductor may run as the lane user. Queues ONE message into ONE existing Codex Desktop conversation of the lane account by wrapping `codex queue` (codex-cli 0.153.x), whose per-account queue the running app drains at the conversation's next turn (proven 2026-09-09, `Journal/Codex Queue Probe (2026-09-09).md`). Same shape as the launcher: sudoers `""` sentinel, no arguments, input on stdin (`THREAD: <name-or-uuid>`, blank line, body), lane-user-only, scrubbed environment, single-run lock, and a hashes-only log at `~popperwick-lane/lane-queue/queue.log`. It resolves the thread against the lane's own `session_index.jsonl` (unknown or duplicated names refused — it never creates conversations), validates the body (UTF-8, no control characters, ≤ 8000 bytes), prepends the CLAUDE.md inter-session ORIGIN TAG and a provenance line, and refuses more than 30 messages per rolling hour. Conductor-side helper: `lane-queue "<thread>" "<body>"` (copy to `~/.local/bin`). Install and acceptance steps: `INSTALL-lane-queue.md`. What crosses is an inter-session turn — untrusted data, never authority.

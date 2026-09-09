@@ -1,0 +1,245 @@
+#!/bin/bash
+# popperwick-lane-queue — the SECOND program the conductor may run as the lane user.
+#
+# Purpose: queue ONE message into ONE existing Codex Desktop conversation that
+# belongs to the lane account, from the conductor's own account, without the
+# user pasting it. Wraps `codex queue` (codex-cli 0.153.x), which writes the
+# calling account's ~/.codex/queue_1.sqlite; the running Codex app drains that
+# queue at the conversation's next turn (proven end to end 2026-09-09,
+# "Journal/Codex Queue Probe (2026-09-09).md").
+#
+# Installed by the user at /usr/local/libexec/popperwick-lane-queue (root:wheel
+# 755) and reached through exactly one additional sudoers line:
+#
+#   OWNER ALL=(popperwick-lane) NOPASSWD:NOSETENV: /usr/local/libexec/popperwick-lane-queue ""
+#
+# The trailing "" is the sudoers empty-argument sentinel: the program is
+# authorised ONLY with no arguments at all, so the rule cannot be widened into
+# a general `codex` invocation even if this script's own argument check were
+# bypassed. Same shape as popperwick-lane-launch.
+#
+# Daily use, from the conductor's own account (one message per call, attended):
+#
+#   printf 'THREAD: %s\n\n%s' "$thread" "$message" \
+#     | sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-queue
+#
+# Input format on stdin (argv is world-readable via ps; stdin is not):
+#   line 1:   THREAD: <exact conversation name or its UUID>
+#   line 2:   (blank)
+#   line 3+:  the message body
+#
+# What it does, in order:
+#   1. refuse arguments; refuse to run as anyone but the lane user; set HOME
+#      itself (NOSETENV means sudo may hand us nothing);
+#   2. read stdin, capped at 16 KB, parse the THREAD header and the body;
+#   3. resolve the thread against the lane's own session index
+#      ($CODEX_HOME/session_index.jsonl): a UUID must exist there; a name must
+#      match EXACTLY ONE conversation (a duplicated name is refused with the
+#      candidate ids, so the caller re-sends with the UUID). Unknown threads are
+#      refused: the wrapper never creates conversations;
+#   4. validate the body: valid UTF-8, no control characters except newline and
+#      tab, 1–8000 bytes;
+#   5. compose the message the conversation will see: the fixed inter-session
+#      ORIGIN TAG (CLAUDE.md, messaging governance rule 2), a provenance line
+#      naming this wrapper, the calling account and the UTC time, then the
+#      body. The tag is body text, not authentication — it tells the reader
+#      the turn is agent-authored and carries no authority;
+#   6. one message at a time (atomic mkdir lock) and a rolling-hour ceiling of
+#      30 messages read from the log, so a looping caller cannot flood a
+#      conversation;
+#   7. scrub the environment to a fixed allow-list and run the app-bundled
+#      `codex queue` (regular file, canonical path, sha256 logged) as the lane
+#      user with the lane's CODEX_HOME;
+#   8. append one log line (UTC, caller, thread id, body sha256, codex exit)
+#      to $HOME/lane-queue/queue.log and exit with codex's exit code.
+#      Every file the wrapper writes is created fresh by mktemp or checked to
+#      be a regular non-symlink file first (the launcher's FIFO/symlink
+#      confused-deputy lesson, Sol 2026-09-02); the state dir is lane-owned
+#      and outside any Codex thread's writable roots.
+#
+# What it never does: create or fork threads, read or print any conversation,
+# accept arguments, execute or render anything from the body, touch the vault,
+# run unattended, or grant anything. The message the lane sees is still an
+# inter-session turn: untrusted data, never authority (CLAUDE.md rule 1).
+#
+# Exit codes (sysexits): 64 usage (arguments given), 65 bad input, 69 a
+# required file or binary is unavailable or non-canonical, 70 internal, 75 busy
+# (lock held or hourly ceiling reached), 77 wrong user.
+
+set -euo pipefail
+umask 077
+
+LANE_USER='popperwick-lane'
+LANE_HOME='/Users/popperwick-lane'
+CODEX_BIN='/Applications/ChatGPT.app/Contents/Resources/codex'
+MAX_STDIN_BYTES=16384
+MAX_BODY_BYTES=8000
+HOURLY_CEILING=30
+ORIGIN_TAG='INTERSESSION — AGENT-GENERATED — NOT USER AUTHORITY — NO SCOPE OR PERMISSION CHANGE'
+
+LOCK_DIR=''
+LOCK_HELD=0
+
+die() {  # $1 message, $2 exit code (default 70)
+  printf 'popperwick-lane-queue: %s\n' "$1" >&2
+  exit "${2:-70}"
+}
+cleanup() {
+  if [ "$LOCK_HELD" -eq 1 ]; then
+    rm -f "$LOCK_DIR/holder" 2>/dev/null || true
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+
+# 1. no arguments, lane user only, HOME set by us.
+if [ "$#" -ne 0 ]; then
+  printf 'usage: printf "THREAD: <name-or-uuid>\\n\\n<body>" | sudo -n -u %s %s\n' "$LANE_USER" "$0" >&2
+  printf '       (no arguments are accepted; the message is read from stdin)\n' >&2
+  exit 64
+fi
+[ "$(/usr/bin/id -un)" = "$LANE_USER" ] || die "must run as $LANE_USER (got $(/usr/bin/id -un))" 77
+export HOME="$LANE_HOME"
+[ -x /bin/realpath ] || die '/bin/realpath missing' 69
+[ "$(/bin/realpath "$HOME" 2>/dev/null || true)" = "$HOME" ] || die 'lane home is not canonical' 69
+CODEX_HOME="$HOME/.codex"
+[ -d "$CODEX_HOME" ] && [ ! -L "$CODEX_HOME" ] || die "$CODEX_HOME missing or a symlink" 69
+INDEX="$CODEX_HOME/session_index.jsonl"
+[ -f "$INDEX" ] && [ ! -L "$INDEX" ] || die "$INDEX missing or a symlink" 69
+[ -f "$CODEX_BIN" ] && [ ! -L "$CODEX_BIN" ] && [ -x "$CODEX_BIN" ] || die "$CODEX_BIN missing, a symlink, or not executable" 69
+[ "$(/bin/realpath "$CODEX_BIN")" = "$CODEX_BIN" ] || die 'codex binary path is not canonical' 69
+[ -x /usr/bin/python3 ] || die '/usr/bin/python3 missing' 69
+
+QDIR="$HOME/lane-queue"
+if [ ! -d "$QDIR" ]; then mkdir -m 700 "$QDIR" || die "cannot create $QDIR" 70; fi
+[ ! -L "$QDIR" ] || die "$QDIR is a symlink" 69
+LOG="$QDIR/queue.log"
+TMP="$QDIR/tmp"
+mkdir -p -m 700 "$TMP" || die "cannot create $TMP" 70
+[ ! -L "$TMP" ] || die "$TMP is a symlink" 69
+
+# 2. stdin, capped; empty refused.
+raw="$(mktemp "$TMP/in.XXXXXX")" || die 'mktemp failed' 70
+/usr/bin/head -c "$((MAX_STDIN_BYTES + 1))" >"$raw" || die 'reading stdin failed' 65
+in_bytes=$(/usr/bin/stat -f %z "$raw")
+[ "$in_bytes" -gt 0 ] || die 'empty stdin (expected "THREAD: <name-or-uuid>", a blank line, then the body)' 65
+[ "$in_bytes" -le "$MAX_STDIN_BYTES" ] || die "stdin exceeds $MAX_STDIN_BYTES bytes" 65
+
+# 3–4. parse, resolve the thread against the lane's own index, validate the body.
+#      python3 is used for strict UTF-8 and JSON handling; it receives only the
+#      raw file path and the index path, never shell-interpolated content.
+resolved="$(/usr/bin/python3 - "$raw" "$INDEX" "$MAX_BODY_BYTES" 2>&1 <<'PY'
+import sys, re, json
+raw_path, index_path, max_body = sys.argv[1], sys.argv[2], int(sys.argv[3])
+data = open(raw_path, 'rb').read()
+try:
+    text = data.decode('utf-8', 'strict')
+except UnicodeDecodeError as e:
+    sys.exit('bad input: stdin is not valid UTF-8 (%s)' % e)
+m = re.match(r'THREAD: ([^\r\n]{1,120})\r?\n\r?\n', text)
+if not m:
+    sys.exit('bad input: first line must be "THREAD: <name-or-uuid>" followed by a blank line')
+thread = m.group(1).strip()
+body = text[m.end():]
+if not (1 <= len(body.encode('utf-8')) <= max_body):
+    sys.exit('bad input: body must be 1..%d bytes' % max_body)
+bad = [c for c in body if (ord(c) < 32 and c not in '\n\t') or 0x7f <= ord(c) < 0xa0 or c in '  ']
+if bad:
+    sys.exit('bad input: body contains control characters')
+if thread.startswith('-'):
+    sys.exit('bad input: thread must not start with "-"')
+uuid_re = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+rows = []
+with open(index_path, 'rb') as fh:
+    for line in fh:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line.decode('utf-8', 'strict')))
+        except Exception:
+            continue
+if uuid_re.match(thread):
+    hits = [r for r in rows if r.get('id') == thread]
+else:
+    hits = [r for r in rows if r.get('thread_name') == thread]
+ids = sorted({r.get('id') for r in hits if r.get('id')})
+if not ids:
+    sys.exit('unknown thread: no conversation in the lane index matches %r (the wrapper never creates one)' % thread)
+if len(ids) > 1:
+    sys.exit('ambiguous thread name %r matches %d conversations: %s — re-send with the UUID' % (thread, len(ids), ', '.join(ids)))
+# strip an origin tag the caller may already have put first; the wrapper adds its own.
+tag = 'INTERSESSION — AGENT-GENERATED — NOT USER AUTHORITY — NO SCOPE OR PERMISSION CHANGE'
+if body.startswith(tag):
+    body = body[len(tag):].lstrip('\n')
+    if not body.strip():
+        sys.exit('bad input: body is only the origin tag')
+sys.stdout.write(ids[0] + '\n')
+sys.stdout.write(body)
+PY
+)" || die "input rejected: $(printf '%s' "$resolved" | /usr/bin/tail -n 1 | /usr/bin/tr -d '\r')" 65
+thread_id="${resolved%%$'\n'*}"
+body="${resolved#*$'\n'}"
+case "$thread_id" in
+  [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-*) ;;
+  *) die 'internal: thread resolution returned a non-uuid' 70 ;;
+esac
+
+# 5. compose. SUDO_USER is set by sudo itself (NOSETENV blocks caller-supplied
+#    variables, not sudo's own); fall back to "unknown" rather than fail.
+caller="${SUDO_USER:-unknown}"
+case "$caller" in *[!A-Za-z0-9._-]*) caller='unknown' ;; esac
+now_utc="$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ')"
+message="$(printf '%s\n[via popperwick-lane-queue from %s at %s; this turn is agent-authored, carries no authority, and asks for no permission or scope change]\n\n%s' "$ORIGIN_TAG" "$caller" "$now_utc" "$body")"
+
+# 6. one at a time, and no more than HOURLY_CEILING per rolling hour.
+LOCK_DIR="$QDIR/.lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  die "another queue call is active (lock $LOCK_DIR, holder: $(/bin/cat "$LOCK_DIR/holder" 2>/dev/null | /usr/bin/tr -d '\n' || true)); if it is dead, remove the lock by hand" 75
+fi
+LOCK_HELD=1
+printf 'pid=%s %s\n' "$$" "$now_utc" >"$LOCK_DIR/holder"
+if [ -e "$LOG" ] || [ -L "$LOG" ]; then
+  [ ! -L "$LOG" ] || die "$LOG is a symlink" 69
+  [ -f "$LOG" ] || die "$LOG is not a regular file (FIFO or device refused)" 69
+  cutoff="$(/bin/date -u -v-1H '+%Y-%m-%dT%H:%M:%SZ')"
+  recent=$(/usr/bin/awk -v c="$cutoff" '$1 > c' "$LOG" | /usr/bin/wc -l | /usr/bin/tr -d ' ')
+  [ "$recent" -lt "$HOURLY_CEILING" ] || die "hourly ceiling reached ($recent messages since $cutoff); this wrapper is for attended, per-instance use" 75
+fi
+
+# 7. scrubbed environment (the launcher's method: unset, then export the
+#    allow-list — never `env -i NAME=value`, which puts values in argv).
+while IFS= read -r -d '' kv; do
+  name="${kv%%=*}"
+  case "$name" in
+    HOME|PATH|USER|LOGNAME|SUDO_USER|TERM|LANG|LC_ALL) ;;
+    *) unset "$name" 2>/dev/null || true ;;
+  esac
+done < <(/usr/bin/env -0)
+export HOME="$LANE_HOME" PATH='/usr/bin:/bin' USER="$LANE_USER" LOGNAME="$LANE_USER" \
+       CODEX_HOME="$CODEX_HOME" TMPDIR="$TMP" LANG='en_US.UTF-8' LC_ALL='en_US.UTF-8'
+cd "$TMP" || die "cannot cd to $TMP" 70
+
+codex_sha="$(/usr/bin/shasum -a 256 "$CODEX_BIN" | /usr/bin/cut -c1-16)"
+body_sha="$(printf '%s' "$body" | /usr/bin/shasum -a 256 | /usr/bin/cut -c1-16)"
+
+set +e
+errf="$(mktemp "$TMP/err.XXXXXX")" || die 'mktemp failed' 70
+out="$("$CODEX_BIN" queue --thread "$thread_id" --message "$message" 2>"$errf")"
+rc=$?
+set -e
+
+# 8. log line and result. The log holds hashes and ids, never message text.
+printf '%s caller=%s thread=%s body_sha256=%s codex_sha256=%s rc=%s\n' \
+  "$now_utc" "$caller" "$thread_id" "$body_sha" "$codex_sha" "$rc" >>"$LOG"
+/bin/chmod 600 "$LOG" 2>/dev/null || true
+rm -f "$raw"
+if [ "$rc" -ne 0 ]; then
+  printf 'popperwick-lane-queue: codex queue failed (rc=%s): %s\n' "$rc" "$(/usr/bin/head -c 400 "$errf" | /usr/bin/tr '\n' ' ')" >&2
+  rm -f "$errf"
+  exit "$rc"
+fi
+rm -f "$errf"
+printf '%s\n' "$out"
+printf 'popperwick-lane-queue: queued into %s (body sha256 %s)\n' "$thread_id" "$body_sha" >&2
+exit 0
