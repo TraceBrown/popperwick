@@ -1,16 +1,22 @@
 #!/bin/bash
 # lane-queue — conductor-side convenience for popperwick-lane-queue (NOT root-owned;
-# lives in the conductor's ~/.local/bin as a copy of this file). Builds the stdin
-# format and calls the one sudoers-authorised program. One message per call.
+# copied to the conductor's ~/.local/bin). Builds the stdin format and calls the one
+# sudoers-authorised program. The message is a POINTER to a Markdown file under
+# /Users/Shared; content goes in the file, never here (round-2 design after Sol).
 #
-#   lane-queue "<conversation name or uuid>" "<message body>"
-#   lane-queue "<conversation name or uuid>" < body.md
+#   lane-queue "<conversation name or uuid>" /Users/Shared/<dir>/<file>.md ["<short ASCII note>"]
 #
 # Needs a Claude Code permission rule so the classifier lets the conductor call it:
 #   Bash(sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-queue)
 set -euo pipefail
-[ "$#" -ge 1 ] || { printf 'usage: lane-queue "<thread>" ["<body>"]  (body on stdin if omitted)\n' >&2; exit 64; }
-thread="$1"; shift
-if [ "$#" -ge 1 ]; then body="$*"; else body="$(cat)"; fi
-[ -n "$body" ] || { printf 'lane-queue: empty body\n' >&2; exit 65; }
-printf 'THREAD: %s\n\n%s' "$thread" "$body" | sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-queue
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  printf 'usage: lane-queue "<thread>" /Users/Shared/<dir>/<file>.md ["<note>"]\n' >&2; exit 64
+fi
+thread="$1"; path="$2"; note="${3:-}"
+case "$path" in /Users/Shared/*.md) ;; *) printf 'lane-queue: the pointer must be a .md file under /Users/Shared\n' >&2; exit 65 ;; esac
+[ -f "$path" ] || { printf 'lane-queue: %s is not a readable file from this account\n' "$path" >&2; exit 65; }
+if [ -n "$note" ]; then
+  printf 'THREAD: %s\n\nREAD %s — %s\n' "$thread" "$path" "$note"
+else
+  printf 'THREAD: %s\n\nREAD %s\n' "$thread" "$path"
+fi | sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-queue
