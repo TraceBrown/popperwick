@@ -1,7 +1,8 @@
 #!/bin/bash -p
 # popperwick-lane-queue — the SECOND program the conductor may run as the lane user.
-# ROUND 3 (2026-09-09): round 2 after Sol's NO-GO on round 1, then Sol's eight
-# GO-WITH-EDITS patches applied verbatim (.openai/2026-09-09-sol-lane-queue-review.md,
+# ROUND 4 (2026-09-09): round 2 after Sol's NO-GO on round 1, Sol's eight round-2
+# patches, then his three round-3 patches (strict single trailing newline, no
+# future tolerance in the log, lock released only after its own token) applied verbatim (.openai/2026-09-09-sol-lane-queue-review.md,
 # .openai/2026-09-09-sol-lane-queue-round2.md). `bash -p` disables BASH_ENV, imported
 # functions and SHELLOPTS before the first line runs. Same sudoers shape as the launcher:
 #
@@ -53,7 +54,8 @@
 #      replaced lock is never removed) and a rolling-hour ceiling of 10
 #      ATTEMPTS counted from canonical attempt records in a 0600 log opened
 #      O_NOFOLLOW|O_APPEND and fstat-checked; malformed, blank, partial,
-#      non-canonical-time or future-dated records fail closed (F6); stdin
+#      non-canonical-time or future-dated (any second ahead) records fail
+#      closed (F6); stdin
 #      must complete within 15 s;
 #   8. append+fsync the attempt record, THEN run the codex copy with an
 #      explicit minimal environment (no SUDO_USER, no TERM), then append the
@@ -181,7 +183,11 @@ def parse_input(data):
     thread = m.group(1).strip()
     if thread.startswith('-') or not thread:
         raise Fail('bad input: thread must not be empty or start with "-"', 65)
-    body = text[m.end():].rstrip('\r\n')
+    body = text[m.end():]
+    if body.endswith('\r\n'):
+        body = body[:-2]
+    elif body.endswith('\n'):
+        body = body[:-1]
     if '\n' in body or '\r' in body:
         raise Fail('bad input: the body must be exactly one line', 65)
     pm = POINTER_RE.fullmatch(body)
@@ -312,7 +318,7 @@ def read_log_attempts(fd, now):
         if not a and not r:
             raise Fail('queue log contains a malformed record; refusing (fail closed)', 69)
         stamp = parse_log_time((a or r).group(1))
-        if stamp > now + 60:
+        if stamp > now:
             raise Fail('queue log contains a future-dated record; refusing (fail closed)', 69)
         if a and stamp > now - 3600:
             n += 1
@@ -326,6 +332,18 @@ def append_record(fd, line):
             raise Fail('short write to queue log', 69)
         pending = pending[written:]
     os.fsync(fd)
+
+def release_owned_lock(lock, token):
+    """Remove the lock ONLY after this call's own token is gone; if the token
+    cannot be unlinked the directory is someone else's (Sol round 3)."""
+    try:
+        os.unlink(token)
+    except OSError:
+        return
+    try:
+        os.rmdir(lock)
+    except OSError:
+        pass
 
 def read_stdin(fd, limit):
     deadline = time.monotonic() + STDIN_TIMEOUT
@@ -396,14 +414,7 @@ def run(mode, cfg):
         finally:
             os.close(log_fd)
     finally:
-        try:
-            os.unlink(token)
-        except OSError:
-            pass
-        try:
-            os.rmdir(lock)
-        except OSError:
-            pass
+        release_owned_lock(lock, token)
     if rc != 0:
         sys.stderr.write('popperwick-lane-queue: codex queue failed (rc=%d); see the queue log\n' % rc)
         return rc
@@ -446,6 +457,8 @@ def selftest():
             ('leading dash thread refused', b'THREAD: -x\n\nREAD /Users/Shared/x/a.md', False),
             ('invalid utf-8 refused', b'THREAD: Type one word\n\nREAD /Users/Shared/x/\xff.md', False),
             ('trailing space refused', b'THREAD: Type one word\n\nREAD /Users/Shared/x/a.md ', False),
+            ('extra trailing blank refused', b'THREAD: Type one word\n\nREAD /Users/Shared/x/a.md\n\n', False),
+            ('single trailing newline ok', b'THREAD: Type one word\n\nREAD /Users/Shared/x/a.md\n', True),
         ]
         for name, data, should_pass in cases:
             try:
@@ -487,7 +500,7 @@ def selftest():
         except Fail as e:
             check('malformed log fails closed', e.code == 69)
         os.close(fd)
-        with open(logp, 'w') as f: f.write('kind=attempt ts=%s thread=01a086a1-185b-73e3-b3c3-ddeef6a558e5 ptr_sha256=%s\n' % (utc(now + 3600), '0' * 64))
+        with open(logp, 'w') as f: f.write('kind=attempt ts=%s thread=01a086a1-185b-73e3-b3c3-ddeef6a558e5 ptr_sha256=%s\n' % (utc(now + 30), '0' * 64))
         fd = open_regular(logp, os.O_RDWR | os.O_APPEND, me, MAX_LOG_BYTES, 'log')
         try:
             read_log_attempts(fd, now); check('future-dated log fails closed', False)
@@ -592,6 +605,17 @@ def selftest():
         except OSError:
             check('lock with a foreign token is not removable', True)
         os.unlink(os.path.join(lock, '.owner-foreign')); os.rmdir(lock)
+        replacement = os.path.join(qdir, '.replacement-test')
+        moved = replacement + '.original'
+        os.mkdir(replacement)
+        owned_token = os.path.join(replacement, '.owner-test')
+        open(owned_token, 'w').close()
+        os.rename(replacement, moved)
+        os.mkdir(replacement)
+        release_owned_lock(replacement, owned_token)
+        check('lock with an empty replacement is not removable', os.path.isdir(replacement))
+        os.rmdir(replacement)
+        os.unlink(os.path.join(moved, '.owner-test')); os.rmdir(moved)
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print('SELF-TEST ' + ('PASS' if ok else 'FAIL'))
