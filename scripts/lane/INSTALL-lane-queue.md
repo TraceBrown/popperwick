@@ -1,6 +1,6 @@
-# Installing popperwick-lane-queue (user-only steps; do not run before Sol's round-2 token)
+# Installing popperwick-lane-queue (user-only steps; do not run before a CONFIRMED-GO token)
 
-Precondition: `.openai/<date>-sol-lane-queue-*.md` carries a CONFIRMED-GO token on the exact wrapper bytes (compare the sha256 printed in step 1 with the token).
+Precondition: `.openai/<date>-sol-lane-queue-*.md` carries a CONFIRMED-GO token on the exact wrapper bytes. Compare the wrapper sha256 printed in step 0 with the token; separately compare the Codex sha256 printed in step 1 with the digest pinned in the reviewed wrapper.
 
 ```bash
 # 0. the wrapper's self-test passes on the bytes you are about to install
