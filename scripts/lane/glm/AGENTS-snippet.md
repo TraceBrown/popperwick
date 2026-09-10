@@ -38,7 +38,8 @@ The read-only mirror of the research vault is cloned in this account at `~/lane/
 3. `MODEL-SWITCHING.md` §"GLM escalation grade" (the footer rubric), §"Model-selection doctrine", §"Delegate-prompting doctrine" (cold register for readers and verifiers; never boldness framing for a summarizer), and the per-model calibration table.
 4. `Pending Decisions/017-model-utilization-routing.md` — dated routing rows: what was delegated, what it cost in minutes, what the check caught. These are worked examples, including the failures.
 5. `Journal/Model-Process Review — Astra's Verdict (2026-09-09).md` — your own review of these processes and what was adopted from it.
-What the mirror does not carry: `.claude/` (skills, scripts, settings), the personal trees, PDFs. If a task needs one of those, ask through the packet, never around it.
+6. `.claude/skills/` — fourteen of the vault's skills (how it runs a session, validates, verifies claims, writes documents of record, designs exhibits, and the trading-domain references), added 2026-09-10; `vault-run-and-operate` and `vault-validation-and-qa` are the two to read first.
+What the mirror does not carry: the rest of `.claude/` (scripts, settings, hooks, credential maps), the personal trees, PDFs. If a task needs one of those, ask through the packet, never around it.
 
 ## What you do not change
 Sandbox settings, approval policy, network settings, the key file, or the tool itself. If the tool cannot reach z.ai from a thread, say so and stop; the network setting is the user's decision.
