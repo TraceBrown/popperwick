@@ -16,5 +16,8 @@ fi
 thread="$1"; path="$2"
 case "$path" in /Users/Shared/*.md) ;; *) printf 'lane-queue: the pointer must be a .md file under /Users/Shared\n' >&2; exit 65 ;; esac
 [ -f "$path" ] || { printf 'lane-queue: %s is not a readable file from this account\n' "$path" >&2; exit 65; }
+# cd / first: the lane user cannot read the conductor's cwd, and sudo prints two harmless
+# getcwd warnings otherwise (seen on the first live call, 2026-09-10). The wrapper cds to / itself.
+cd / || exit 70
 printf 'THREAD: %s\n\nREAD %s\n' "$thread" "$path" |
   /usr/bin/sudo -n -u popperwick-lane /usr/local/libexec/popperwick-lane-queue
