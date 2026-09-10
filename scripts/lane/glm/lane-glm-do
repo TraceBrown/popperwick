@@ -1,96 +1,228 @@
-#!/usr/bin/env bash
-# lane-glm-do — GLM 5.3 as a headless, tool-less text worker for the lane account.
-# VERSION 2 (2026-09-10): a plain HTTPS call to z.ai's OpenAI-style chat endpoint.
-# No Claude Code, no Codex, no agent harness: text in, text out, nothing else is
-# even possible. Key lives in ONE file the user places: ~/.credentials/zai.key (600).
-#
-# Why not Claude Code as transport (the conductor's own glm-do does that): it works,
-# but it drags a whole agent CLI in just to relay text, and its cage exists to strip
-# tools the model would otherwise have. Why not Codex: Codex speaks only the
-# Responses protocol to custom providers, and z.ai serves no /responses endpoint
-# (probed 2026-09-10: 404 on both bases). This wrapper has no tool surface to cage.
-#
-# Usage:
-#   lane-glm-do "Summarize the claims in the text below. Be faithful; do not add facts.
-#
-#   <pasted text>"
-#   lane-glm-do --max "Reconcile the two figures below: ..."      # deeper reasoning
-#   lane-glm-do --low "Classify these 40 lines: ..."              # cheapest
-#   cat file.md | lane-glm-do "Extract every definition with a locator:"   # stdin appended
-#   lane-glm-do "..." > a.txt &  lane-glm-do "..." > b.txt &  wait          # fan-out
-#
-# Effort: high by default; --max / --low map to z.ai's reasoning_effort with thinking on.
-# Limits: keep one call's text under ~25 KB (longer inputs have hung or come back short);
-# state the expected record count for lists; treat every answer as a draft to spot-check.
-set -euo pipefail
+#!/usr/bin/env python3
+"""lane-glm-do — GLM 5.3 (z.ai coding plan) as a headless, tool-less text worker for the
+lane account. VERSION 3 (2026-09-10): the interface Astra designed for itself
+(.openai/2026-09-10-astra-lane-glm-design.md), on the direct-HTTPS transport.
 
-ENDPOINT='https://api.z.ai/api/coding/paas/v4/chat/completions'   # the coding-plan base; the pay-per-token base (/api/paas/v4) needs a funded balance
-MODEL='glm-5.3'
-KEY_FILE="${LANE_GLM_KEY_FILE:-$HOME/.credentials/zai.key}"
-MAX_TOKENS="${LANE_GLM_MAX_TOKENS:-16000}"
-TIMEOUT="${LANE_GLM_TIMEOUT:-1800}"
+  Instructions come from --prompt-file; source material comes on stdin; argv carries
+  only switches and paths (never source text, never credentials — ps is world-readable).
 
-EFFORT='high'
-case "${1:-}" in
-  --max) EFFORT='max'; shift ;;
-  --low) EFFORT='low'; shift ;;
-esac
+    lane-glm-do --prompt-file extract.txt --effort high --max-tokens 8000 --deadline 300 \\
+        --format jsonl --expect-ids chunk-01.ids --output chunk-01.draft.jsonl < chunk-01.txt
 
-[ -r "$KEY_FILE" ] || { echo "lane-glm-do: key file $KEY_FILE missing or unreadable (see README-GLM-for-Astra.md, step 1)" >&2; exit 69; }
-mode=$(/usr/bin/stat -f '%Lp' "$KEY_FILE"); [ "$mode" = "600" ] || { echo "lane-glm-do: $KEY_FILE must be mode 600 (is $mode)" >&2; exit 69; }
+    printf 'Reply with exactly OK.\\n' | lane-glm-do --effort off --max-tokens 64 --deadline 15
 
-# Prompt = arguments, then stdin (if any) appended as the material.
-prompt="$*"
-# Stdin is appended only if data actually arrives within 2 s: a harness that leaves
-# stdin open but silent must not block us (the kimi-do trap, 2026-09-09).
-if [ ! -t 0 ] && IFS= read -r -t 2 -n 1 first_byte; then
-  stdin_text="${first_byte}$(cat)"
-  prompt="${prompt}${prompt:+
+Effort: off (thinking disabled — smoke tests and trivial transforms), low, high, max.
+Output: stdout, or --output FILE written privately and renamed atomically only after
+validation; a failed or truncated response is left as FILE.partial with a nonzero exit.
+Validation: finish_reason must be "stop" (a "length" finish is a truncated draft, exit 75);
+with --format jsonl and --expect-ids, every expected id must appear exactly once and no
+other id may appear (exit 75 on any mismatch). Stderr carries elapsed time, finish reason,
+usage and validation status — never reasoning text or response bodies.
+Key: ~/.credentials/zai.key (dir 700, file 600, owned by the caller, not a symlink, one
+line), read straight into the request header. Exit codes: 0 ok · 65 bad input · 69 key or
+config · 70 request failed · 75 truncated or incomplete · 124 deadline.
+"""
+import sys, os, stat, json, time, argparse, select, threading, tempfile, ssl, socket
+import urllib.request, urllib.error
 
-}${stdin_text}"
-fi
-[ -n "$prompt" ] || { echo "lane-glm-do: empty prompt" >&2; exit 65; }
+ENDPOINT = "https://api.z.ai/api/coding/paas/v4/chat/completions"
+MODEL = "glm-5.3"
+MAX_STDIN = 25 * 1024
+STDIN_FIRST_BYTE_WAIT = 2.0
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/lane-glm-do.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
-chmod 700 "$work"
+def die(msg, code):
+    sys.stderr.write("lane-glm-do: %s\n" % msg); sys.exit(code)
 
-# Body written by python so the prompt is JSON-escaped exactly (the prompt goes through a
-# file, not stdin — python's stdin carries the script); key delivered to curl through a
-# config file on stdin (-K -), never through argv.
-printf '%s' "$prompt" > "$work/prompt.txt"
-/usr/bin/python3 - "$MODEL" "$EFFORT" "$MAX_TOKENS" "$work/body.json" "$work/prompt.txt" <<'PY'
-import sys, json
-model, effort, max_tokens, out, prompt_path = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5]
-prompt = open(prompt_path, encoding="utf-8").read()
-body = {"model": model, "max_tokens": max_tokens,
-        "thinking": {"type": "enabled"}, "reasoning_effort": effort,
-        "messages": [{"role": "user", "content": prompt}]}
-json.dump(body, open(out, "w"))
-PY
+def read_key(path):
+    try:
+        st = os.lstat(path)
+    except OSError as e:
+        die("key file %s: %s" % (path, e.strerror), 69)
+    if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+        die("key file must be a regular file, not a symlink", 69)
+    if st.st_uid != os.getuid():
+        die("key file must be owned by the calling user", 69)
+    if stat.S_IMODE(st.st_mode) != 0o600:
+        die("key file must be mode 600 (is %o)" % stat.S_IMODE(st.st_mode), 69)
+    dst = os.lstat(os.path.dirname(os.path.abspath(path)))
+    if stat.S_IMODE(dst.st_mode) & 0o077:
+        die("key directory must not be group/world accessible (mode %o)" % stat.S_IMODE(dst.st_mode), 69)
+    with open(path, "rb") as fh:
+        data = fh.read(4096)
+    lines = [l for l in data.decode("utf-8", "strict").splitlines() if l.strip()]
+    if len(lines) != 1 or len(lines[0]) < 20 or any(c.isspace() for c in lines[0]):
+        die("key file must hold exactly one key on one line", 69)
+    return lines[0]
 
-key="$(/bin/cat "$KEY_FILE" | /usr/bin/tr -d '\r\n')"
-printf 'header = "Authorization: Bearer %s"\n' "$key" | \
-  /usr/bin/curl -sS -K - --max-time "$TIMEOUT" -H 'Content-Type: application/json' \
-    -o "$work/resp.json" -w '%{http_code}' --data-binary "@$work/body.json" "$ENDPOINT" > "$work/status" || { echo "lane-glm-do: curl failed" >&2; exit 70; }
-unset key
+def read_stdin_material(deadline_at):
+    """Material on stdin; a tty or an open-but-silent stdin yields nothing (no blocking)."""
+    if sys.stdin.isatty():
+        return ""
+    fd = sys.stdin.fileno()
+    r, _, _ = select.select([fd], [], [], STDIN_FIRST_BYTE_WAIT)
+    if not r:
+        return ""
+    chunks, total = [], 0
+    while True:
+        remaining = deadline_at - time.monotonic()
+        if remaining <= 0:
+            die("deadline reached while reading stdin", 124)
+        r, _, _ = select.select([fd], [], [], min(remaining, 5.0))
+        if not r:
+            continue
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_STDIN:
+            die("stdin exceeds %d bytes; chunk the material (record boundaries, locators kept)" % MAX_STDIN, 65)
+        chunks.append(chunk)
+    try:
+        return b"".join(chunks).decode("utf-8", "strict")
+    except UnicodeDecodeError:
+        die("stdin is not valid UTF-8", 65)
 
-status="$(cat "$work/status")"
-if [ "$status" != "200" ]; then
-  echo "lane-glm-do: HTTP $status — $(/usr/bin/head -c 300 "$work/resp.json" | /usr/bin/tr -d '\n')" >&2
-  exit 70
-fi
-/usr/bin/python3 - "$work/resp.json" <<'PY'
-import sys, json
-r = json.load(open(sys.argv[1]))
-ch = (r.get("choices") or [{}])[0]
-msg = ch.get("message") or {}
-content = msg.get("content") or ""
-fin = ch.get("finish_reason")
-u = r.get("usage") or {}
-if not content.strip():
-    sys.stderr.write("lane-glm-do: empty content (finish_reason=%s); the model spent its output on reasoning — retry with a smaller input or a higher LANE_GLM_MAX_TOKENS\n" % fin)
-    sys.exit(75)
-sys.stdout.write(content if content.endswith("\n") else content + "\n")
-sys.stderr.write("[lane-glm-do: model=%s finish=%s in=%s out=%s]\n" % (r.get("model"), fin, u.get("prompt_tokens"), u.get("completion_tokens")))
-PY
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, "redirect refused (%s)" % newurl, headers, fp)
+
+def call(key, body, deadline_at, connect_timeout):
+    data = json.dumps(body).encode("utf-8")
+    req = urllib.request.Request(ENDPOINT, data=data, method="POST",
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + key,
+                                          "Accept": "application/json"})
+    ctx = ssl.create_default_context()
+    opener = urllib.request.build_opener(NoRedirect(), urllib.request.HTTPSHandler(context=ctx))
+    result = {}
+    def worker():
+        try:
+            remaining = max(1.0, deadline_at - time.monotonic())
+            socket.setdefaulttimeout(min(connect_timeout, remaining))
+            with opener.open(req, timeout=remaining) as resp:
+                result["status"] = resp.status
+                result["body"] = resp.read(8 * 1024 * 1024)
+        except urllib.error.HTTPError as e:
+            result["status"] = e.code
+            try:
+                result["body"] = e.read(4096)
+            except Exception:
+                result["body"] = b""
+        except Exception as e:
+            result["error"] = "%s: %s" % (type(e).__name__, e)
+    t = threading.Thread(target=worker, daemon=True); t.start()
+    started = time.monotonic(); beat = 30.0
+    while t.is_alive():
+        t.join(timeout=1.0)
+        el = time.monotonic() - started
+        if el >= beat:
+            sys.stderr.write("[lane-glm-do: waiting %ds]\n" % int(el)); beat += 30.0
+        if time.monotonic() >= deadline_at and t.is_alive():
+            die("deadline reached after %ds with no response" % int(el), 124)
+    return result, time.monotonic() - started
+
+def validate_jsonl(text, expect_ids):
+    ids, bad = [], []
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            bad.append("line %d is not JSON" % n); continue
+        if not isinstance(obj, dict) or "id" not in obj:
+            bad.append("line %d has no id" % n); continue
+        ids.append(str(obj["id"]))
+    if bad:
+        return "malformed jsonl: " + "; ".join(bad[:5])
+    if expect_ids is not None:
+        exp = set(expect_ids); got = set(ids)
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        missing = sorted(exp - got); extra = sorted(got - exp)
+        if missing or extra or dup:
+            return "id coverage failed: missing=%s extra=%s duplicate=%s" % (missing[:10], extra[:10], dup[:10])
+    return None
+
+def main():
+    ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--prompt-file", help="instructions (required unless --prompt is given for short, public text)")
+    ap.add_argument("--prompt", help="short PUBLIC instruction text; appears in ps — never source material")
+    ap.add_argument("--effort", choices=["off", "low", "high", "max"], default="off")
+    ap.add_argument("--max-tokens", type=int, default=8000)
+    ap.add_argument("--deadline", type=float, default=300.0, help="hard wall-clock seconds for the whole call")
+    ap.add_argument("--connect-timeout", type=float, default=20.0)
+    ap.add_argument("--format", choices=["text", "jsonl"], default="text")
+    ap.add_argument("--expect-ids", help="file with one expected id per line (jsonl only)")
+    ap.add_argument("--output", help="write here atomically; FILE.partial on failure")
+    ap.add_argument("--key-file", default=os.environ.get("LANE_GLM_KEY_FILE", os.path.expanduser("~/.credentials/zai.key")))
+    a = ap.parse_args()
+    if not a.prompt_file and not a.prompt:
+        die("give --prompt-file (or --prompt for a short public instruction)", 65)
+    if a.expect_ids and a.format != "jsonl":
+        die("--expect-ids needs --format jsonl", 65)
+    deadline_at = time.monotonic() + a.deadline
+    key = read_key(a.key_file)
+    try:
+        instructions = open(a.prompt_file, encoding="utf-8").read() if a.prompt_file else a.prompt
+    except OSError as e:
+        die("prompt file: %s" % e.strerror, 65)
+    if not instructions.strip():
+        die("empty instructions", 65)
+    material = read_stdin_material(deadline_at)
+    expect_ids = None
+    if a.expect_ids:
+        try:
+            expect_ids = [l.strip() for l in open(a.expect_ids, encoding="utf-8") if l.strip()]
+        except OSError as e:
+            die("expect-ids file: %s" % e.strerror, 65)
+        if not expect_ids:
+            die("expect-ids file is empty", 65)
+    content_text = instructions if not material else instructions.rstrip("\n") + "\n\n" + material
+    if a.format == "jsonl":
+        content_text += "\n\nOUTPUT FORMAT: one JSON object per line, each with an \"id\" field%s. No prose before or after." % (
+            " matching exactly the %d expected ids" % len(expect_ids) if expect_ids else "")
+    body = {"model": MODEL, "max_tokens": a.max_tokens,
+            "messages": [{"role": "user", "content": content_text}]}
+    if a.effort == "off":
+        body["thinking"] = {"type": "disabled"}
+    else:
+        body["thinking"] = {"type": "enabled"}; body["reasoning_effort"] = a.effort
+    res, elapsed = call(key, body, deadline_at, a.connect_timeout)
+    del key
+    if "error" in res:
+        die("request failed after %.1fs: %s" % (elapsed, res["error"]), 70)
+    if res.get("status") != 200:
+        die("HTTP %s after %.1fs: %s" % (res.get("status"), elapsed, res.get("body", b"")[:300].decode("utf-8", "replace").replace("\n", " ")), 70)
+    try:
+        r = json.loads(res["body"].decode("utf-8"))
+        ch = (r.get("choices") or [{}])[0]; msg = ch.get("message") or {}
+        content = msg.get("content") or ""; fin = ch.get("finish_reason"); u = r.get("usage") or {}
+    except Exception as e:
+        die("unparseable response (%s)" % type(e).__name__, 70)
+    status = "ok"; problem = None
+    if fin != "stop":
+        status = "truncated"; problem = "finish_reason=%s (not stop)" % fin
+    elif not content.strip():
+        status = "empty"; problem = "content empty with finish_reason=stop"
+    elif a.format == "jsonl":
+        v = validate_jsonl(content, expect_ids)
+        if v:
+            status = "incomplete"; problem = v
+    sys.stderr.write("[lane-glm-do: model=%s effort=%s elapsed=%.1fs finish=%s in=%s out=%s status=%s]\n" % (
+        r.get("model"), a.effort, elapsed, fin, u.get("prompt_tokens"), u.get("completion_tokens"), status))
+    out_text = content if content.endswith("\n") else content + "\n"
+    if a.output:
+        target = a.output if status == "ok" else a.output + ".partial"
+        d = os.path.dirname(os.path.abspath(target)) or "."
+        fd, tmp = tempfile.mkstemp(prefix=".lane-glm-do.", dir=d)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(out_text)
+        os.chmod(tmp, 0o600); os.replace(tmp, target)
+        sys.stderr.write("[lane-glm-do: wrote %s]\n" % target)
+    else:
+        sys.stdout.write(out_text)
+    if problem:
+        die(problem, 75)
+
+if __name__ == "__main__":
+    main()
