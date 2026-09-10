@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# lane-glm-do — GLM 5.3 (via z.ai) as a headless, tool-less text worker, for the
+# lane account. A trimmed copy of the conductor's glm-do (2026-09-10): same cage,
+# same flags, no Keychain (the key lives in the settings file the USER places).
+#
+# GLM gets text in and returns text out. It has NO tools: it cannot read files,
+# browse, or write anything. You (the caller) fetch and paste; GLM summarizes,
+# extracts, drafts. Treat every answer as a draft to check — it will sometimes
+# misread, over-claim, or invent a citation.
+#
+# Usage:
+#   lane-glm-do "Summarize the claims in the text below. Be faithful; do not add facts.
+#
+#   <pasted text>"
+#   lane-glm-do --max "Reconcile the two conflicting figures below: ..."   # deeper reasoning
+#   cat file.md | lane-glm-do "Extract every definition with a locator:"    # pipe big inputs
+#   lane-glm-do "..." > a.txt &  lane-glm-do "..." > b.txt &  wait         # fan out
+#
+# Settings files (in $HOME/.claude/, mode 600, placed by the user; templates beside this
+# script): settings-glm.json (effort high, the default), settings-glm-max.json (--max),
+# settings-glm-medium.json (--medium, cheaper). The z.ai key lives ONLY there.
+set -euo pipefail
+
+# Unset any inherited ANTHROPIC_* so the settings file is the child's sole authority
+# (the desktop app exports ANTHROPIC_BASE_URL into shells; process env beats --settings).
+for _v in $(env | sed -n 's/^\(ANTHROPIC_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_v"; done
+
+GLM_SETTINGS="$HOME/.claude/settings-glm.json"
+case "${1:-}" in
+  --max)    GLM_SETTINGS="$HOME/.claude/settings-glm-max.json"; shift ;;
+  --medium) GLM_SETTINGS="$HOME/.claude/settings-glm-medium.json"; shift ;;
+esac
+[ -r "$GLM_SETTINGS" ] || { echo "lane-glm-do: $GLM_SETTINGS missing or unreadable (see README-GLM-for-Astra.md, step 2)" >&2; exit 69; }
+command -v claude >/dev/null 2>&1 || { echo "lane-glm-do: the 'claude' CLI is not on PATH (Claude Code must be installed for this account)" >&2; exit 69; }
+
+# Neutral cwd: the caged child never inherits the caller's directory (it could pick up
+# project context from it). Created fresh per call, removed after unless GLM left files.
+_NEUTRAL="$(mktemp -d "${TMPDIR:-/tmp}/lane-glm-do.XXXXXX")"
+trap 'rmdir "$_NEUTRAL" 2>/dev/null || echo "lane-glm-do: child left files in $_NEUTRAL — preserved" >&2' EXIT
+cd "$_NEUTRAL"
+
+# The cage (do not remove any flag): --bare skips hooks, plugins, MCP, memory and CLAUDE.md;
+# --strict-mcp-config allows zero MCP servers; --tools "" gives an empty toolset; the
+# settings file's permissions.deny is ["*"]-equivalent for every built-in tool.
+if [ "$#" -eq 0 ]; then
+  exec claude --settings "$GLM_SETTINGS" --bare --strict-mcp-config --tools "" -p
+else
+  exec claude --settings "$GLM_SETTINGS" --bare --strict-mcp-config --tools "" -p "$*"
+fi
