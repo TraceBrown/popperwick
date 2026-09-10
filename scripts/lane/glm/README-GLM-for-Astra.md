@@ -1,6 +1,6 @@
-# GLM for the lane account — setup and usage (for Astra; key steps are the user's)
+# GLM for the lane account — setup and usage (for Astra; the key step is the user's)
 
-*Written 2026-09-10 by the conductor at the user's request ("give Astra a README on how to set up glm-do, to help with usage rates"). This is a trimmed copy of the conductor's own `glm-do` arrangement: GLM 5.3 through z.ai, driven by Claude Code's `claude -p` in a fully caged, tool-less mode. Nothing here grants any authority; GLM is a text worker you delegate reading to, not a reviewer, verifier, or decision-maker.*
+*Written 2026-09-10 by the conductor at the user's request ("give Astra a README on how to set up glm-do, to help with usage rates"). **Version 2:** the wrapper is a direct HTTPS call to z.ai's OpenAI-style chat endpoint (`https://api.z.ai/api/coding/paas/v4/chat/completions`), verified with the user's coding-plan key. It needs no Claude Code and no Codex: text in, text out, nothing else is possible. Why not Claude Code as transport (the conductor's own `glm-do` does that): it works, but drags a whole agent CLI in to relay text and then cages its tools away. Why not Codex: Codex speaks only the Responses protocol to custom providers and z.ai serves no `/responses` endpoint (probed 2026-09-10: 404 on both bases). Nothing here grants any authority; GLM is a text worker you delegate reading to, not a reviewer, verifier, or decision-maker.*
 
 ## What GLM is for (and not for)
 
@@ -12,40 +12,42 @@ GLM is cheap and fast. Use it to save your own tokens on **bulk, low-judgment te
 
 Never use it to: search or pick sources (it has no tools and no web); verify anything (its output is the thing that needs verifying); make a judgment call; handle credentials or anything private you were not given. Two models agreeing is not proof; you still check load-bearing claims against the original.
 
-Known behaviour on this machine: faithful at volume when handed the text (two real errors in 614k words on one pass; many 10/10 spot-checks), weak at source skepticism (it will accuse a source of fraud on thin evidence), drifts on rule-style texts, and **on long inputs it can hang silently** (a 25-minute silent hang on one 60 KB deck) or **return only part of a list** (23 of 50 records on a 22 KB chunk). Chunk inputs to about 20–25 KB, state the expected record count, and reconcile what came back against what you sent before you read the prose. Every call prints a `[claude-code:unrecognized_model] {"model":"glm-5.3"}` warning on stderr; it is harmless.
+Known behaviour on this machine: faithful at volume when handed the text (two real errors in 614k words on one pass; many 10/10 spot-checks), weak at source skepticism (it will accuse a source of fraud on thin evidence), drifts on rule-style texts, and **on long inputs it can hang silently** (a 25-minute silent hang on one 60 KB deck) or **return only part of a list** (23 of 50 records on a 22 KB chunk). Chunk inputs to about 20–25 KB, state the expected record count, and reconcile what came back against what you sent before you read the prose. Every call prints one bracketed status line on stderr with the token counts; that is the only noise.
 
 ## Setup
 
 ### Step 1 — the user places the key (user only; never through chat, never in a prompt)
-1. In the z.ai console, create a **dedicated** API key for this account if the plan allows a second key (so it can be revoked without touching the conductor's). Otherwise the existing coding-plan key is reused; same weekly quota (10,000 credits/week on the Lite plan; the conductor's usage has been about 3%).
-2. As the lane user, copy the three templates beside this README into `~/.claude/`, renaming them without `.template`:
-   - `settings-glm.json` (effort high, the default)
-   - `settings-glm-max.json` (`--max`)
-   - `settings-glm-medium.json` (`--medium`)
-3. Open each and replace `PASTE-THE-ZAI-KEY-HERE-THEN-chmod-600` with the key. Then:
+1. In the z.ai console, create a **dedicated** API key for this account if the plan allows a second key (so it can be revoked without touching the conductor's). Otherwise the existing coding-plan key is reused; same weekly quota (10,000 credits/week on the Lite plan; the conductor's usage has run about 3%).
+2. As the lane user:
    ```bash
-   chmod 600 ~/.claude/settings-glm*.json
+   mkdir -p ~/.credentials && chmod 700 ~/.credentials
+   # paste the key into ~/.credentials/zai.key with TextEdit or pbpaste — one line, nothing else
+   chmod 600 ~/.credentials/zai.key
    ```
-   The key lives only in these three files. Nothing else in this package touches it.
+   The wrapper refuses to run unless that file is mode 600. The key lives nowhere else.
 
-**What this exposes, said plainly:** anything running as the lane user, including Codex threads, can read those files. That is inherent in letting Astra call GLM. A dedicated key makes the blast radius one revocation.
+**What this exposes, said plainly:** anything running as the lane user, including Codex threads, can read that file. That is inherent in letting Astra call GLM. A dedicated key makes the blast radius one revocation.
 
 ### Step 2 — install the wrapper (Astra can do this; it writes only inside the lane home)
 ```bash
 mkdir -p ~/.local/bin
 install -m 755 /Users/Shared/lane-glm-setup/lane-glm-do ~/.local/bin/lane-glm-do
-command -v claude || echo "Claude Code is not on PATH for this account; install or sign in first"
 ```
-Claude Code must exist for this account (`claude` on PATH). The wrapper uses it only as a transport to z.ai; with `--bare --strict-mcp-config --tools ""` it loads no hooks, plugins, MCP servers, memory or CLAUDE.md, and the settings file denies every built-in tool.
+Dependencies: `/usr/bin/curl` and `/usr/bin/python3` (both ship with macOS). No Claude Code, no Codex, no MCP.
 
 ### Step 3 — test
 ```bash
 lane-glm-do "Reply with the single word OK."
 ```
-Expected: `OK` (plus the harmless model warning on stderr). If you get a 401, the settings file's key is wrong or an inherited `ANTHROPIC_BASE_URL` pointed the call at Anthropic instead of z.ai; the wrapper unsets inherited `ANTHROPIC_*` variables for exactly that reason, so check the file first. If the call hangs with no output, the input was too long or the service is parking requests; kill it and retry a smaller chunk.
+Expected: `OK` on stdout and one bracketed status line on stderr (`model=glm-5.3 finish=stop in=… out=…`), in about ten seconds. On the conductor's account this exact test returned in 10 s at high effort and 4.5 s at `--low`.
+- `HTTP 401`: the key file is wrong.
+- `HTTP 429 … Insufficient balance`: the call went to the pay-per-token base; the wrapper's endpoint is the coding-plan base, so this means the key is not a coding-plan key.
+- `key file … must be mode 600`: run the chmod in step 1.
+- Empty content with `finish=length`: the model spent its output on reasoning; retry with `--low`, a smaller input, or `LANE_GLM_MAX_TOKENS=32000`.
+- Silence for minutes: the input was too long or the service is parking requests; the wrapper gives up after 30 minutes (`LANE_GLM_TIMEOUT`); kill it and retry a smaller chunk.
 
 ### If you call it from inside a Codex thread
-Codex's own sandbox may block outbound network for shell commands (`sandbox_workspace_write.network_access` in `~/.codex/config.toml`). Test with Step 3 from a thread. If it fails only there, that setting is a widening of what Codex commands can do and is the **user's decision**, not a thing to change on your own.
+Codex's own sandbox may block outbound network for shell commands (`sandbox_workspace_write.network_access` in `~/.codex/config.toml`). Run Step 3 from a thread. If it fails only there, that setting is a widening of what Codex commands can do and is the **user's decision**, not a thing to change on your own.
 
 ## How to prompt it
 
@@ -66,4 +68,4 @@ Patterns that work here:
 Spot-check quotes against the original with whitespace-tolerant matching (a literal grep once falsely "caught" two correct figures). Treat "SUSPECT" or "fraud" labels as prompts to verify, not findings. Reconcile counts before reading. Keep the digest; discard nothing silently; if a chunk came back short, rerun that chunk smaller, once, then leave it pending.
 
 ## Files in this package
-`lane-glm-do` (the wrapper), `settings-glm.template.json`, `settings-glm-max.template.json`, `settings-glm-medium.template.json` (each with the key placeholder), this README. Vault copy: `.claude/scripts/lane/glm/`. Shared copy for the lane: `/Users/Shared/lane-glm-setup/`.
+`lane-glm-do` (the wrapper; `--max` / `--low` select `reasoning_effort` with thinking on; stdin is appended as material if data arrives within two seconds) and this README. Vault copy: `.claude/scripts/lane/glm/`. Shared copy for the lane: `/Users/Shared/lane-glm-setup/`. Test record: conductor's account, 2026-09-10, four cases (default, `--low` with piped text, open-but-silent stdin, wrong key mode) all as expected.

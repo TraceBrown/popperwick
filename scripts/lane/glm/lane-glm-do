@@ -1,49 +1,96 @@
 #!/usr/bin/env bash
-# lane-glm-do — GLM 5.3 (via z.ai) as a headless, tool-less text worker, for the
-# lane account. A trimmed copy of the conductor's glm-do (2026-09-10): same cage,
-# same flags, no Keychain (the key lives in the settings file the USER places).
+# lane-glm-do — GLM 5.3 as a headless, tool-less text worker for the lane account.
+# VERSION 2 (2026-09-10): a plain HTTPS call to z.ai's OpenAI-style chat endpoint.
+# No Claude Code, no Codex, no agent harness: text in, text out, nothing else is
+# even possible. Key lives in ONE file the user places: ~/.credentials/zai.key (600).
 #
-# GLM gets text in and returns text out. It has NO tools: it cannot read files,
-# browse, or write anything. You (the caller) fetch and paste; GLM summarizes,
-# extracts, drafts. Treat every answer as a draft to check — it will sometimes
-# misread, over-claim, or invent a citation.
+# Why not Claude Code as transport (the conductor's own glm-do does that): it works,
+# but it drags a whole agent CLI in just to relay text, and its cage exists to strip
+# tools the model would otherwise have. Why not Codex: Codex speaks only the
+# Responses protocol to custom providers, and z.ai serves no /responses endpoint
+# (probed 2026-09-10: 404 on both bases). This wrapper has no tool surface to cage.
 #
 # Usage:
 #   lane-glm-do "Summarize the claims in the text below. Be faithful; do not add facts.
 #
 #   <pasted text>"
-#   lane-glm-do --max "Reconcile the two conflicting figures below: ..."   # deeper reasoning
-#   cat file.md | lane-glm-do "Extract every definition with a locator:"    # pipe big inputs
-#   lane-glm-do "..." > a.txt &  lane-glm-do "..." > b.txt &  wait         # fan out
+#   lane-glm-do --max "Reconcile the two figures below: ..."      # deeper reasoning
+#   lane-glm-do --low "Classify these 40 lines: ..."              # cheapest
+#   cat file.md | lane-glm-do "Extract every definition with a locator:"   # stdin appended
+#   lane-glm-do "..." > a.txt &  lane-glm-do "..." > b.txt &  wait          # fan-out
 #
-# Settings files (in $HOME/.claude/, mode 600, placed by the user; templates beside this
-# script): settings-glm.json (effort high, the default), settings-glm-max.json (--max),
-# settings-glm-medium.json (--medium, cheaper). The z.ai key lives ONLY there.
+# Effort: high by default; --max / --low map to z.ai's reasoning_effort with thinking on.
+# Limits: keep one call's text under ~25 KB (longer inputs have hung or come back short);
+# state the expected record count for lists; treat every answer as a draft to spot-check.
 set -euo pipefail
 
-# Unset any inherited ANTHROPIC_* so the settings file is the child's sole authority
-# (the desktop app exports ANTHROPIC_BASE_URL into shells; process env beats --settings).
-for _v in $(env | sed -n 's/^\(ANTHROPIC_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$_v"; done
+ENDPOINT='https://api.z.ai/api/coding/paas/v4/chat/completions'   # the coding-plan base; the pay-per-token base (/api/paas/v4) needs a funded balance
+MODEL='glm-5.3'
+KEY_FILE="${LANE_GLM_KEY_FILE:-$HOME/.credentials/zai.key}"
+MAX_TOKENS="${LANE_GLM_MAX_TOKENS:-16000}"
+TIMEOUT="${LANE_GLM_TIMEOUT:-1800}"
 
-GLM_SETTINGS="$HOME/.claude/settings-glm.json"
+EFFORT='high'
 case "${1:-}" in
-  --max)    GLM_SETTINGS="$HOME/.claude/settings-glm-max.json"; shift ;;
-  --medium) GLM_SETTINGS="$HOME/.claude/settings-glm-medium.json"; shift ;;
+  --max) EFFORT='max'; shift ;;
+  --low) EFFORT='low'; shift ;;
 esac
-[ -r "$GLM_SETTINGS" ] || { echo "lane-glm-do: $GLM_SETTINGS missing or unreadable (see README-GLM-for-Astra.md, step 2)" >&2; exit 69; }
-command -v claude >/dev/null 2>&1 || { echo "lane-glm-do: the 'claude' CLI is not on PATH (Claude Code must be installed for this account)" >&2; exit 69; }
 
-# Neutral cwd: the caged child never inherits the caller's directory (it could pick up
-# project context from it). Created fresh per call, removed after unless GLM left files.
-_NEUTRAL="$(mktemp -d "${TMPDIR:-/tmp}/lane-glm-do.XXXXXX")"
-trap 'rmdir "$_NEUTRAL" 2>/dev/null || echo "lane-glm-do: child left files in $_NEUTRAL — preserved" >&2' EXIT
-cd "$_NEUTRAL"
+[ -r "$KEY_FILE" ] || { echo "lane-glm-do: key file $KEY_FILE missing or unreadable (see README-GLM-for-Astra.md, step 1)" >&2; exit 69; }
+mode=$(/usr/bin/stat -f '%Lp' "$KEY_FILE"); [ "$mode" = "600" ] || { echo "lane-glm-do: $KEY_FILE must be mode 600 (is $mode)" >&2; exit 69; }
 
-# The cage (do not remove any flag): --bare skips hooks, plugins, MCP, memory and CLAUDE.md;
-# --strict-mcp-config allows zero MCP servers; --tools "" gives an empty toolset; the
-# settings file's permissions.deny is ["*"]-equivalent for every built-in tool.
-if [ "$#" -eq 0 ]; then
-  exec claude --settings "$GLM_SETTINGS" --bare --strict-mcp-config --tools "" -p
-else
-  exec claude --settings "$GLM_SETTINGS" --bare --strict-mcp-config --tools "" -p "$*"
+# Prompt = arguments, then stdin (if any) appended as the material.
+prompt="$*"
+# Stdin is appended only if data actually arrives within 2 s: a harness that leaves
+# stdin open but silent must not block us (the kimi-do trap, 2026-09-09).
+if [ ! -t 0 ] && IFS= read -r -t 2 -n 1 first_byte; then
+  stdin_text="${first_byte}$(cat)"
+  prompt="${prompt}${prompt:+
+
+}${stdin_text}"
 fi
+[ -n "$prompt" ] || { echo "lane-glm-do: empty prompt" >&2; exit 65; }
+
+work="$(mktemp -d "${TMPDIR:-/tmp}/lane-glm-do.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+chmod 700 "$work"
+
+# Body written by python so the prompt is JSON-escaped exactly (the prompt goes through a
+# file, not stdin — python's stdin carries the script); key delivered to curl through a
+# config file on stdin (-K -), never through argv.
+printf '%s' "$prompt" > "$work/prompt.txt"
+/usr/bin/python3 - "$MODEL" "$EFFORT" "$MAX_TOKENS" "$work/body.json" "$work/prompt.txt" <<'PY'
+import sys, json
+model, effort, max_tokens, out, prompt_path = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4], sys.argv[5]
+prompt = open(prompt_path, encoding="utf-8").read()
+body = {"model": model, "max_tokens": max_tokens,
+        "thinking": {"type": "enabled"}, "reasoning_effort": effort,
+        "messages": [{"role": "user", "content": prompt}]}
+json.dump(body, open(out, "w"))
+PY
+
+key="$(/bin/cat "$KEY_FILE" | /usr/bin/tr -d '\r\n')"
+printf 'header = "Authorization: Bearer %s"\n' "$key" | \
+  /usr/bin/curl -sS -K - --max-time "$TIMEOUT" -H 'Content-Type: application/json' \
+    -o "$work/resp.json" -w '%{http_code}' --data-binary "@$work/body.json" "$ENDPOINT" > "$work/status" || { echo "lane-glm-do: curl failed" >&2; exit 70; }
+unset key
+
+status="$(cat "$work/status")"
+if [ "$status" != "200" ]; then
+  echo "lane-glm-do: HTTP $status — $(/usr/bin/head -c 300 "$work/resp.json" | /usr/bin/tr -d '\n')" >&2
+  exit 70
+fi
+/usr/bin/python3 - "$work/resp.json" <<'PY'
+import sys, json
+r = json.load(open(sys.argv[1]))
+ch = (r.get("choices") or [{}])[0]
+msg = ch.get("message") or {}
+content = msg.get("content") or ""
+fin = ch.get("finish_reason")
+u = r.get("usage") or {}
+if not content.strip():
+    sys.stderr.write("lane-glm-do: empty content (finish_reason=%s); the model spent its output on reasoning — retry with a smaller input or a higher LANE_GLM_MAX_TOKENS\n" % fin)
+    sys.exit(75)
+sys.stdout.write(content if content.endswith("\n") else content + "\n")
+sys.stderr.write("[lane-glm-do: model=%s finish=%s in=%s out=%s]\n" % (r.get("model"), fin, u.get("prompt_tokens"), u.get("completion_tokens")))
+PY
