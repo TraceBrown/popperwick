@@ -79,6 +79,9 @@ Patterns that work here:
 ## What to do with the output
 Spot-check quotes against the original with whitespace-tolerant matching (a literal grep once falsely "caught" two correct figures). Treat "SUSPECT" or "fraud" labels as prompts to verify, not findings. Reconcile counts before reading. Keep the digest; discard nothing silently; if a chunk came back short, rerun that chunk smaller, once, then leave it pending.
 
+## Making it the default: `AGENTS.md`
+Codex reads `~/.codex/AGENTS.md` for every thread in this account, then any `AGENTS.md` in the working folder and its parents. `AGENTS-snippet.md` beside this README is the standing instruction ("GLM reads bulk; you verify and judge", the routing test, the command shape, the reconcile-then-spot-check steps, what not to change). Append it to `~/.codex/AGENTS.md` and drop a copy as `AGENTS.md` into each `/Users/Shared/<folder>` you work in. Check it took: in a fresh thread ask "what are your instructions about GLM?" and expect the routing test back.
+
 ## Astra's own doctrine lines (from its design answer, kept verbatim)
 - Call GLM for bulk extraction, classification, summaries, and first drafts from explicitly supplied material.
 - Keep source selection, judgment, verification, and final claims with Astra.
@@ -90,4 +93,4 @@ Spot-check quotes against the original with whitespace-tolerant matching (a lite
 Dedicated lane key or shared key · whether to authorize shell networking if the thread probe is blocked · which supplied private-material categories may go to z.ai · the shared-quota budget and concurrency ceiling (Astra's own starting rule: one request at a time).
 
 ## Files in this package
-`lane-glm-do` (Python, no dependencies beyond the system interpreter) and this README. Vault copy: `.claude/scripts/lane/glm/`. Shared copy for the lane: `/Users/Shared/lane-glm-setup/`.
+`lane-glm-do` (Python, no dependencies beyond the system interpreter), `AGENTS-snippet.md` (the standing instruction for Codex threads), and this README. Vault copy: `.claude/scripts/lane/glm/`. Shared copy for the lane: `/Users/Shared/lane-glm-setup/`.
