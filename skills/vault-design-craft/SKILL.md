@@ -9,8 +9,7 @@ Distilled 2026-07-25 (AUTH-006 item 6, Q2) from the bench-redesign design
 panel — two designer models briefed blind at max effort, both verified and
 published — plus the pre-publish battery the conductor ran before either page
 went live. Sources: `.kimi/2026-07-24-bench-redesign-kimi.md`,
-`.openai/2026-07-24-bench-redesign-sol.md`, [[Sources/ChatGPT Plugin
-Directory — Finance Review (2026-07-24)]] (Q2 line).
+`.openai/2026-07-24-bench-redesign-sol.md`, [[Sources/ChatGPT Plugin Directory — Finance Review (2026-07-24)]] (Q2 line).
 
 ## 1. Presentation ethics (the load-bearing section)
 

@@ -55,8 +55,7 @@ Reviewer intuition never outranks a verified passage (see table, row 4).
 
 ## Adopted verification patterns (2026-08-17, anthropics/skills quarry, user-ratified)
 
-Concept-level adoptions, re-expressed for this vault ([[Sources/Anthropics
-Skills — Source Read (2026-08-17)]] T1-2/T1-4; they are patterns, not
+Concept-level adoptions, re-expressed for this vault ([[Sources/Anthropics Skills — Source Read (2026-08-17)]] T1-2/T1-4; they are patterns, not
 incident-evidenced table rows — the table's own rule stands):
 
 - **State the check's scope.** Every verification records what the green
