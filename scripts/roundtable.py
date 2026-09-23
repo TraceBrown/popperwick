@@ -120,8 +120,8 @@ SEATS = {
         "label": "GPT",
         "default_tier": "luna",
         "tiers": {
-            "luna": {"argv": ["gpt-do", "--luna"], "timeout": 900, "note": "gpt-5.6-luna@low"},
-            "sol": {"argv": ["gpt-do", "--sol"], "timeout": 2400, "note": "gpt-5.6-sol@xhigh"},
+            "luna": {"argv": ["gpt-do", "--luna"], "timeout": 900, "note": "gpt-6-luna@low (GPT-6 since 2026-09-22)"},
+            "sol": {"argv": ["gpt-do", "--sol"], "timeout": 2400, "note": "gpt-6-sol@xhigh (GPT-6 since 2026-09-22)"},
             "terra": {"argv": ["gpt-do", "--terra"], "timeout": 900, "note": "gpt-5.6-terra@high — probation control"},
             "astra": {"argv": ["gpt-do", "--astra"], "timeout": 2400, "note": "gpt-6-astra@xhigh — review/design tier"},
         },
