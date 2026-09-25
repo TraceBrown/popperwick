@@ -1,0 +1,7 @@
+# local run artefacts only; the published tree is produced by a re-export
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+roundtable/sessions/*
+!roundtable/sessions/.gitkeep
